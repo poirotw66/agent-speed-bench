@@ -1,0 +1,14 @@
+name: custom-agent
+repeats: 3
+jobs: 1
+timeout_seconds: 180
+agents:
+  - name: antigravity
+    adapter: generic
+    command: /absolute/path/to/verified/headless-cli
+    args: ["{prompt}"]
+cases:
+  - name: first-response
+    prompt: Print BENCH_DONE and do not modify files.
+    verify:
+      output_contains: BENCH_DONE

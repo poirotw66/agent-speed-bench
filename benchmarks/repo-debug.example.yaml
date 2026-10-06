@@ -1,0 +1,19 @@
+name: repo-debug
+repeats: 3
+jobs: 1
+timeout_seconds: 600
+agents:
+  - name: codex
+    adapter: codex
+cases:
+  - name: repair
+    repo:
+      path: /absolute/path/to/a/local/repository
+      commit: REPLACE_WITH_PINNED_BUGGY_COMMIT
+    prompt: |
+      Repair the specific bug described here. Preserve existing behavior.
+      Replace this prompt with a concrete task before running this example.
+    verify:
+      command: go
+      args: [test, ./...]
+      timeout_seconds: 120

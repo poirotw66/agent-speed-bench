@@ -1,0 +1,18 @@
+name: offline-demo
+repeats: 3
+jobs: 1
+timeout_seconds: 5
+agents:
+  - name: demo
+    adapter: demo
+cases:
+  - name: first-response
+    prompt: Say Done and give the answer 42.
+    verify:
+      output_contains: "Done: 42"
+  - name: write-file
+    prompt: Write the answer 42 followed by a newline to solution.txt.
+    verify:
+      command: sh
+      args: ["-c", "test -f solution.txt && test \"$(cat solution.txt)\" = 42"]
+      output_contains: "Done: 42"

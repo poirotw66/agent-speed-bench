@@ -1,0 +1,18 @@
+name: quick-response
+repeats: 5
+jobs: 1
+timeout_seconds: 180
+agents:
+  - name: codex
+    adapter: codex
+  - name: claude
+    adapter: claude
+  - name: cursor
+    adapter: cursor
+cases:
+  - name: enumerate
+    prompt: |
+      Do not call tools or modify files. Print the integers 1 through 100,
+      one per line, then print BENCH_DONE on its own line. Do not add commentary.
+    verify:
+      output_contains: BENCH_DONE

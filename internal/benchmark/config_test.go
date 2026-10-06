@@ -1,0 +1,57 @@
+package benchmark
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func loadText(t *testing.T, text string) (Config, error) {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "bench.yaml")
+	if err := os.WriteFile(p, []byte(text), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return Load(p)
+}
+
+const validConfig = `name: test
+agents:
+  - name: custom
+    adapter: generic
+    command: ./agent
+cases:
+  - name: task
+    prompt: hello
+`
+
+func TestDefaultsAndRelativePaths(t *testing.T) {
+	c, err := loadText(t, validConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Jobs != 1 || c.Repeats != 1 || c.Cases[0].TimeoutSeconds != 300 || c.Cases[0].Verify.TimeoutSeconds != 60 || !filepath.IsAbs(c.Agents[0].Command) {
+		t.Fatal(c)
+	}
+}
+func TestConfigRejectsInvalidInput(t *testing.T) {
+	for name, tail := range map[string]string{"unknown-field": "oops: true\n", "second-document": "---\nname: another\n", "negative-jobs": "jobs: -1\n", "bad-case": "cases:\n  - name: ../bad\n    prompt: hello\n", "unsafe-seed": "cases:\n  - name: task\n    prompt: hello\n    files: {../outside: bad}\n"} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := loadText(t, validConfig+tail); err == nil {
+				t.Fatal("invalid input accepted")
+			}
+		})
+	}
+}
+func TestSafeSeedPaths(t *testing.T) {
+	for _, p := range []string{"", ".", "..", "../out", "/tmp/out", ".git/config", "nested/.git", "nested/.git/config"} {
+		if SafePath(p) {
+			t.Fatalf("accepted %q", p)
+		}
+	}
+	for _, p := range []string{"README.md", "src/main.go"} {
+		if !SafePath(p) {
+			t.Fatalf("rejected %q", p)
+		}
+	}
+}

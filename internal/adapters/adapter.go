@@ -1,0 +1,301 @@
+package adapters
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/poirotw66/agent-speed-bench/internal/benchmark"
+	"github.com/poirotw66/agent-speed-bench/internal/telemetry"
+)
+
+type Command struct {
+	Path  string
+	Args  []string
+	Stdin string
+}
+type Capabilities struct {
+	StructuredOutput bool   `json:"structured_output"`
+	TokenUsage       bool   `json:"token_usage"`
+	ToolIntervals    bool   `json:"tool_intervals"`
+	GenerationTiming bool   `json:"generation_timing"`
+	Notes            string `json:"notes"`
+}
+type Adapter interface {
+	BuildCommand(prompt, workdir string) (Command, error)
+	ParseEvent(line []byte) ([]telemetry.Event, error)
+	Capabilities() Capabilities
+	RequiresTerminal() bool
+	TerminalSeen() bool
+}
+
+type parser struct {
+	agent    benchmark.Agent
+	terminal bool
+	streamed bool
+}
+
+func New(a benchmark.Agent) (Adapter, error) {
+	switch a.Adapter {
+	case "codex", "claude", "cursor", "generic", "demo":
+		return &parser{agent: a}, nil
+	default:
+		return nil, fmt.Errorf("unsupported adapter: %s", a.Adapter)
+	}
+}
+
+func (p *parser) BuildCommand(prompt, workdir string) (Command, error) {
+	c := Command{Path: p.agent.Command}
+	switch p.agent.Adapter {
+	case "codex":
+		if c.Path == "" {
+			c.Path = "codex"
+		}
+		c.Args = []string{"exec", "--json", "--ephemeral", "--sandbox", "workspace-write", "--skip-git-repo-check", "--color", "never"}
+		if p.agent.Model != "" {
+			c.Args = append(c.Args, "--model", p.agent.Model)
+		}
+		c.Args = append(c.Args, "-")
+		c.Stdin = prompt
+	case "claude":
+		if c.Path == "" {
+			c.Path = "claude"
+		}
+		c.Args = []string{"--print", "--output-format", "stream-json", "--verbose", "--include-partial-messages"}
+		if p.agent.Model != "" {
+			c.Args = append(c.Args, "--model", p.agent.Model)
+		}
+		c.Stdin = prompt
+	case "cursor":
+		if c.Path == "" {
+			c.Path = "agent"
+		}
+		c.Args = []string{"--print", "--output-format", "stream-json", "--stream-partial-output"}
+		if p.agent.Model != "" {
+			c.Args = append(c.Args, "--model", p.agent.Model)
+		}
+		c.Args = append(c.Args, "--", prompt)
+	case "demo":
+		var err error
+		c.Path, err = os.Executable()
+		if err != nil {
+			return c, err
+		}
+		c.Args = []string{"__demo-agent"}
+		c.Stdin = prompt
+	case "generic":
+		c.Args = make([]string, len(p.agent.Args))
+		r := strings.NewReplacer("{prompt}", prompt, "{model}", p.agent.Model, "{workdir}", workdir)
+		for i, arg := range p.agent.Args {
+			c.Args[i] = r.Replace(arg)
+		}
+		c.Stdin = prompt
+	}
+	return c, nil
+}
+
+func (p *parser) Capabilities() Capabilities {
+	switch p.agent.Adapter {
+	case "codex":
+		return Capabilities{StructuredOutput: true, TokenUsage: true, ToolIntervals: true, Notes: "Completed message items are buffered; tool intervals are observed item lifetimes."}
+	case "claude":
+		return Capabilities{StructuredOutput: true, TokenUsage: true, ToolIntervals: true, Notes: "Partial text deltas; tool_use to tool_result includes harness overhead. Final result usage is authoritative."}
+	case "cursor":
+		return Capabilities{StructuredOutput: true, ToolIntervals: true, Notes: "Partial text deltas with duplicate flush filtering. Documented output has no token usage."}
+	case "demo":
+		return Capabilities{StructuredOutput: true, TokenUsage: true, ToolIntervals: true, Notes: "Synthetic events and tokens; never compare demo results with real agents."}
+	default:
+		return Capabilities{StructuredOutput: true, Notes: "Canonical JSONL telemetry is optional. Plain stdout is captured but provides no token usage."}
+	}
+}
+func (p *parser) RequiresTerminal() bool { return p.agent.Adapter != "generic" }
+func (p *parser) TerminalSeen() bool     { return p.terminal }
+
+// These structs intentionally ignore unknown fields for forward compatibility.
+type wire struct {
+	Type    string                     `json:"type"`
+	Subtype string                     `json:"subtype"`
+	IsError bool                       `json:"is_error"`
+	Message json.RawMessage            `json:"message"`
+	Result  string                     `json:"result"`
+	Usage   map[string]json.RawMessage `json:"usage"`
+	Item    struct {
+		ID      string `json:"id"`
+		Type    string `json:"type"`
+		Text    string `json:"text"`
+		Command string `json:"command"`
+	} `json:"item"`
+	Event struct {
+		Type  string `json:"type"`
+		Delta struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"delta"`
+	} `json:"event"`
+	CallID          string                     `json:"call_id"`
+	ToolCall        map[string]json.RawMessage `json:"tool_call"`
+	TimestampMS     *int64                     `json:"timestamp_ms"`
+	ModelCallID     string                     `json:"model_call_id"`
+	ParentToolUseID *string                    `json:"parent_tool_use_id"`
+}
+type content struct {
+	Type      string `json:"type"`
+	Text      string `json:"text"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	ToolUseID string `json:"tool_use_id"`
+}
+
+func (p *parser) ParseEvent(line []byte) ([]telemetry.Event, error) {
+	if p.agent.Adapter == "generic" || p.agent.Adapter == "demo" {
+		var e telemetry.Event
+		if err := json.Unmarshal(line, &e); err != nil {
+			if p.agent.Adapter == "generic" && !bytes.HasPrefix(bytes.TrimSpace(line), []byte("{")) {
+				return []telemetry.Event{{Type: "assistant_output", Text: string(line) + "\n"}}, nil
+			}
+			return nil, err
+		}
+		switch e.Type {
+		case "assistant_output", "tool_started", "tool_finished", "usage_reported", "usage_total", "agent_ready":
+			if e.Usage != nil {
+				for _, v := range []*int64{e.Usage.InputTokens, e.Usage.OutputTokens, e.Usage.CachedTokens} {
+					if v != nil && *v < 0 {
+						return nil, fmt.Errorf("negative usage")
+					}
+				}
+			}
+			return []telemetry.Event{e}, nil
+		case "agent_completed":
+			p.terminal = true
+			return []telemetry.Event{{Type: "agent_completed"}}, nil
+		case "agent_error":
+			return []telemetry.Event{{Type: "agent_error", Text: e.Text}}, nil
+		default:
+			return nil, nil
+		}
+	}
+	var w wire
+	if err := json.Unmarshal(line, &w); err != nil {
+		return nil, err
+	}
+	if w.Type == "error" || w.Type == "turn.failed" || w.IsError {
+		return []telemetry.Event{{Type: "agent_error", Text: "Agent reported failure; inspect raw.jsonl"}}, nil
+	}
+	var events []telemetry.Event
+	switch p.agent.Adapter {
+	case "codex":
+		switch w.Type {
+		case "turn.started":
+			p.terminal = false
+		case "item.started", "item.completed":
+			switch w.Item.Type {
+			case "agent_message":
+				if w.Type == "item.completed" && w.Item.Text != "" {
+					events = append(events, telemetry.Event{Type: "assistant_output", Text: w.Item.Text})
+				}
+			case "command_execution", "mcp_tool_call", "web_search":
+				t := "tool_started"
+				if w.Type == "item.completed" {
+					t = "tool_finished"
+				}
+				events = append(events, telemetry.Event{Type: t, ToolID: w.Item.ID, ToolName: w.Item.Type})
+			}
+		case "turn.completed":
+			p.terminal = true
+			u, err := usage(w.Usage)
+			if err != nil {
+				return nil, err
+			}
+			events = append(events, telemetry.Event{Type: "usage_reported", Usage: &u}, telemetry.Event{Type: "agent_completed"})
+		}
+	case "claude", "cursor":
+		if w.ParentToolUseID != nil {
+			return nil, nil
+		}
+		switch w.Type {
+		case "stream_event":
+			if w.Event.Type == "content_block_delta" && w.Event.Delta.Type == "text_delta" && w.Event.Delta.Text != "" {
+				p.streamed = true
+				events = append(events, telemetry.Event{Type: "assistant_output", Text: w.Event.Delta.Text})
+			}
+		case "assistant", "user":
+			var msg struct {
+				Content []content `json:"content"`
+			}
+			if len(w.Message) > 0 {
+				if err := json.Unmarshal(w.Message, &msg); err != nil {
+					return nil, err
+				}
+			}
+			for _, block := range msg.Content {
+				switch block.Type {
+				case "text":
+					valid := w.Type == "assistant" && !p.streamed
+					if p.agent.Adapter == "cursor" {
+						valid = w.Type == "assistant" && w.TimestampMS != nil && w.ModelCallID == ""
+					}
+					if valid && block.Text != "" {
+						events = append(events, telemetry.Event{Type: "assistant_output", Text: block.Text})
+					}
+				case "tool_use":
+					if p.agent.Adapter == "claude" {
+						events = append(events, telemetry.Event{Type: "tool_started", ToolID: block.ID, ToolName: block.Name})
+					}
+				case "tool_result":
+					if p.agent.Adapter == "claude" {
+						events = append(events, telemetry.Event{Type: "tool_finished", ToolID: block.ToolUseID})
+					}
+				}
+			}
+		case "tool_call":
+			if p.agent.Adapter == "cursor" && (w.Subtype == "started" || w.Subtype == "completed") {
+				t := "tool_started"
+				if w.Subtype == "completed" {
+					t = "tool_finished"
+				}
+				name := "tool"
+				for k := range w.ToolCall {
+					name = k
+					break
+				}
+				events = append(events, telemetry.Event{Type: t, ToolID: w.CallID, ToolName: name})
+			}
+		case "result":
+			if w.Subtype != "success" {
+				return []telemetry.Event{{Type: "agent_error", Text: "Non-success terminal result"}}, nil
+			}
+			p.terminal = true
+			// Final result text is an authoritative transcript for grading, not a new delta.
+			events = append(events, telemetry.Event{Type: "final_output", Text: w.Result}, telemetry.Event{Type: "agent_completed"})
+			if p.agent.Adapter == "claude" {
+				u, err := usage(w.Usage)
+				if err != nil {
+					return nil, err
+				}
+				events = append(events, telemetry.Event{Type: "usage_total", Usage: &u})
+			}
+		}
+	}
+	return events, nil
+}
+
+func usage(m map[string]json.RawMessage) (telemetry.Usage, error) {
+	var u telemetry.Usage
+	for _, field := range []struct {
+		name string
+		dst  **int64
+	}{{"input_tokens", &u.InputTokens}, {"output_tokens", &u.OutputTokens}, {"cached_input_tokens", &u.CachedTokens}, {"cache_read_input_tokens", &u.CachedTokens}} {
+		raw, ok := m[field.name]
+		if !ok || string(raw) == "null" {
+			continue
+		}
+		var v int64
+		if err := json.Unmarshal(raw, &v); err != nil || v < 0 {
+			return u, fmt.Errorf("invalid usage field %s", field.name)
+		}
+		*field.dst = &v
+	}
+	return u, nil
+}
