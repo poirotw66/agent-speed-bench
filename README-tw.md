@@ -35,7 +35,7 @@ go build -trimpath -o bin/agentspeedbench ./cmd/agentspeedbench
 - 輸出斷言與命令驗證；未配置驗證的成功執行標示為未評分。
 - SQLite 歷史資料、JSONL 原始事件、HTML 報表及報表重建。
 
-各 agent 的預設權限保護會保留。Workspace 隔離用於保護來源 checkout，不是主機安全沙箱；repo 內的測試仍可能被 agent 修改，不能當成防竄改的 hidden tests。
+內建 coding CLI 統一使用指定的 YOLO 模式：Codex／Cursor 加上 `--yolo`，agy／Claude 加上 `--dangerously-skip-permissions`。Cursor 另指定 `--sandbox disabled`，避免繼承不同權限政策。每筆紀錄保留 adapter 的權限標記，舊 sandbox 結果不與 YOLO 結果合併。Generic 命令保留自行指定的 argv；demo 與 API adapter 沒有 coding CLI 權限模式。Workspace 隔離用於保護來源 checkout，不是主機安全沙箱；repo 內的測試仍可能被 agent 修改，不能當成防竄改的 hidden tests。
 
 ## 吞吐量的界線
 
@@ -132,4 +132,46 @@ python3 scripts/prepare-lazygit.py
 
 `repo.fresh_history: true` 只在一次性 clone 移除上游 Git 歷史與 remote，建立單一起始 commit；run 仍記錄原始上游 SHA，manifest 保存此政策。不移除 repo 指令，也不限制其他主機檔案存取。
 
-Codex 專用 `isolate_config: true` 跳過 user config 與 .rules，停用 memories、plugins、apps、browser_use、computer_use；設定快照標記 `user_config_ignored`。認證仍使用 CODEX_HOME；AGENTS.md、skills、managed policy、環境與服務端快取不宣稱已隔離。其他 adapter 不接受此選項。兩個選項預設皆為 false，既有 profiles 保持相容；舊 CLI 可能不支援這些旗標。[官方 CLI 文件](https://learn.chatgpt.com/docs/developer-commands)。
+`isolate_config: true` 現在支援 Codex、Cursor 與 agy，建立私有暫存 HOME，只複製支援的登入資料。Codex 忽略個人設定與 rules，停用 memories、plugins、apps、瀏覽器／電腦操作及專案指令探索；CLI 一律使用上述 YOLO 政策，與設定隔離分開記錄；暫存 HOME 不再產生 sandbox 權限設定。各家的權限機制分別記錄，不能視為相同。Cursor 可讀取既有 macOS 鑰匙圈登入資料到暫存認證檔；agy 重用既有 OAuth token，沒有修改或修復系統鑰匙圈。正常清理會刪除暫存認證；程序突然終止可能留下私有暫存目錄。
+
+案例可設定 `strip_instructions: true`，移除暫存工作區中已知的 agent 指令與設定，不跟隨符號連結。這是有版本的清單，並不代表主機、網路、管理政策、環境變數或服務端快取已完整隔離。兩個選項預設皆為 false，需使用支援相關旗標的 CLI。
+
+## 受控比較與重新評分
+
+`benchmarks/controlled-output.yaml` 包含七組設定、三種輸出長度，每組／案例一次暖身、十次正式測試，循序執行。`benchmarks/controlled-real-go.yaml` 每組執行三次 owner 大小寫案例。請分開執行，避免本機工作互相競爭。額度或認證限制會停止該設定的後續呼叫並列為未評分；不完整矩陣不能宣稱完成比較。
+
+`go_cache: cold` 每次建立空的獨立 Go 快取；`go_cache: warm` 必須提供可信任的 `cache_warmup`，在固定原始版本上準備快取，再開始 agent 計時。兩者使用 vendored 相依套件，禁止模組查詢與自動下載工具鏈，另記錄準備時間。服務端快取仍不保證相同；舊設定維持原有快取行為。
+
+新增真實案例為提交訊息空白保留（[PR #5528](https://github.com/jesseduffield/lazygit/pull/5528)）及分支差異批次查詢（[PR #5536](https://github.com/jesseduffield/lazygit/pull/5536)）。空白案例允許六個功能原始檔；外部評分聚焦分割與 co-author 行為，沒有完整互動 UI 驗證。固定 commit、允許提交的檔案與測試套件記於 `benchmarks/real-go/cases.json`。
+
+```sh
+python3 scripts/prepare-real-go.py
+./bin/agentspeedbench run benchmarks/real-go-extended.yaml
+# ATTEMPT_DIR 替換為一次 whitespace 測試的 artifact 目錄。
+python3 scripts/verify-real-go.py whitespace core ATTEMPT_DIR/candidate --retained
+python3 scripts/verify-real-go.py whitespace regression ATTEMPT_DIR/candidate --retained
+```
+
+`retain_patch: true` 需搭配 repo 與 retain_files；保存允許提交路徑的 `candidate.patch.txt`（包含新檔），以及 SHA-256／大小清單 `source_manifest.json`。重新評分驗證 hash，重建可信任原始版本與相依套件，不採用 candidate 測試。分享前需檢查提交原始碼內容。
+
+報告依快取、指令、設定隔離與權限政策分組，顯示準備時間中位數、wall time 四分位數及範圍；這些不是信賴區間。舊紀錄若明確包含額度錯誤，報告會解讀為無法使用／未評分，不改寫原始資料。額度與基礎設施錯誤不納入速度樣本。agy 明確回報 headless 權限自動拒絕時，即使 exit code 是零也列為無法使用／未評分；參見[官方 headless 權限說明](https://www.antigravity.google/docs/cli/headless/)。Manifest 每筆紀錄後以原子替換更新；中斷的實驗仍是不完整實驗，不會自動續跑。
+
+## API 串流
+
+`openai-responses` 是沒有 coding tools 的 HTTP SSE 回應 adapter。需指定 API 帳戶可用的 model、認證環境變數名稱與輸出 token 上限：
+
+```yaml
+name: api-response
+adapter: openai-responses
+model: YOUR_API_MODEL
+api:
+  endpoint: https://api.openai.com/v1/responses
+  key_env: OPENAI_API_KEY
+  max_output_tokens: 2048
+```
+
+金鑰只從環境變數讀取，不寫入設定或 artifacts。請求使用 stream=true、store=false，不自動重試；除離線測試用 loopback HTTP 外要求 HTTPS，拒絕轉址。原始回應會保留於本機，請使用適合保存的 prompt 與內容；HTTP 錯誤本文不保存。
+
+第一至最後 SSE delta 的接收區間／Unicode 字元率不計入第一個 chunk 的字元，仍受緩衝與 relay 影響，不能當作解碼速度或 model-active TPS。原生 output token 可能包含推理，另標示 accounting；缺少 usage 或只有一個 delta 時保持未知。正式 API 實測仍待指定供應商、模型、認證環境變數與費用上限；本次尚未呼叫正式 API。[官方串流文件](https://developers.openai.com/api/docs/guides/streaming-responses)。
+
+目前本機證據：修正 Cursor 認證重用後，七組隔離短輸出 smoke 皆成功；中斷的正式矩陣中 agy 完成 50 筆呼叫，沒有鑰匙圈／認證錯誤。受控快取 owner 案例通過兩層評分，兩個新增案例通過 base-fails/fixed-passes 驗證。這些驗證支持測試流程正常，尚不是完整速度排名，也不代表系統鑰匙圈已修復。

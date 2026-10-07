@@ -120,3 +120,23 @@ func TestCharacterAndReceiptStatisticsAreRendered(t *testing.T) {
 		}
 	}
 }
+
+func TestQuotaDoesNotBecomeSpeedOrFailureSample(t *testing.T) {
+	fail := false
+	runs := []telemetry.Run{{Agent: "a", Case: "c", Status: "failed", Success: &fail, Failure: &telemetry.Failure{Message: "You have hit your usage limit"}, Metrics: telemetry.Metrics{SchemaVersion: 2, WallSeconds: 1}}}
+	groups := Aggregate(runs)
+	if groups[0].Graded != 0 || groups[0].WallP50 != nil || groups[0].PassedPerWallHour != nil {
+		t.Fatal(groups)
+	}
+	if runs[0].Success == nil || runs[0].Status != "failed" || runs[0].Failure.Category != "" {
+		t.Fatal("historical record mutated")
+	}
+}
+
+func TestPoliciesAreSeparated(t *testing.T) {
+	runs := []telemetry.Run{{Agent: "a", Case: "c", Status: "completed", Environment: telemetry.Environment{GoCachePolicy: "cold"}, Metrics: telemetry.Metrics{SchemaVersion: 2, WallSeconds: 1}}, {Agent: "a", Case: "c", Status: "completed", Environment: telemetry.Environment{GoCachePolicy: "warm"}, Metrics: telemetry.Metrics{SchemaVersion: 2, WallSeconds: 10}}}
+	groups := Aggregate(runs)
+	if len(groups) != 2 || groups[0].GoCachePolicy != "cold" || *groups[0].WallMax != 1 || *groups[1].WallMin != 10 {
+		t.Fatal(groups)
+	}
+}

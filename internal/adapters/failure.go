@@ -53,6 +53,8 @@ func ClassifyFailure(data []byte) *telemetry.Failure {
 	walk(data, 0)
 	msg := strings.ToLower(f.Message)
 	switch {
+	case telemetry.IsUsageLimit(f.Code, f.Message):
+		f.Category, f.Code, f.Scope, f.Retryable = "quota", "usage_limit_reached", "agent", false
 	case f.Code == "model_not_found" || f.Code == "model_not_supported" || (strings.Contains(msg, "model") && (strings.Contains(msg, "not supported") || strings.Contains(msg, "does not exist"))):
 		f.Category, f.Code, f.Scope, f.Retryable = "configuration", "model_not_supported", "agent", false
 	case (f.HTTPStatus != nil && *f.HTTPStatus == 401) || f.Code == "invalid_api_key" || f.Code == "authentication_error" || strings.Contains(msg, "not logged in") || strings.Contains(msg, "authentication required") || strings.Contains(msg, "please log in") || strings.Contains(msg, "run codex login"):

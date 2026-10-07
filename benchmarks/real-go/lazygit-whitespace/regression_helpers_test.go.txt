@@ -1,0 +1,10 @@
+package helpers
+
+import "testing"
+
+func TestASBRegressionSummaryOnly(t *testing.T) {
+    for _,message:=range []string{"Title", "Title\n\n"} {
+        title,body:=(&CommitsHelper{}).SplitCommitMessageAndDescription(message)
+        if title!="Title" || body!="" {t.Fatalf("unexpected summary-only split: %q / %q",title,body)}
+    }
+}

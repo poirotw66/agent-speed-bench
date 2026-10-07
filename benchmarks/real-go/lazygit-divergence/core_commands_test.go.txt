@@ -1,0 +1,28 @@
+package git_commands
+
+import (
+    "strings"
+    "testing"
+    "github.com/jesseduffield/lazygit/pkg/commands/models"
+    "github.com/jesseduffield/lazygit/pkg/commands/oscommands"
+)
+
+func TestASBCoreBatchedDivergence(t *testing.T) {
+    bases:=[]string{"refs/heads/main","refs/remotes/origin/stable"}
+    branch:=&models.Branch{Name:"topic"}
+    stale:=&models.Branch{Name:"gone"}
+    stale.BehindBaseBranch.Store(42)
+    calls:=0
+    runner:=oscommands.NewFakeRunner(t).ExpectFunc("single batched ref query",func(command *oscommands.CmdObj) bool {
+        args:=command.GetCmd().Args[1:]
+        calls++
+        return len(args)==3 && args[0]=="for-each-ref" && strings.Contains(args[1],"%(ahead-behind:"+bases[0]+")") && strings.Contains(args[1],"%(ahead-behind:"+bases[1]+")") && strings.TrimSuffix(args[2],"/")=="refs/heads"
+    },"refs/heads/topic\x003 2\x001 7\n",nil)
+    common:=buildGitCommon(commonDeps{runner:runner,gitVersion:&GitVersion{2,41,0,""}})
+    loader:=&BranchLoader{Common:common.Common,GitCommon:common,cmd:common.cmd}
+    main:=&MainBranches{c:common.Common,cmd:common.cmd,existingMainBranches:bases,previousMainBranches:common.Common.UserConfig().Git.MainBranches}
+    rendered:=false
+    if err:=loader.GetBehindBaseBranchValuesForAllBranches([]*models.Branch{branch,stale},main,func(){rendered=true});err!=nil {t.Fatal(err)}
+    if calls!=1 || branch.BehindBaseBranch.Load()!=7 || stale.BehindBaseBranch.Load()!=0 || !rendered {t.Fatalf("incorrect batch: calls=%d behind=%d stale=%d rendered=%v",calls,branch.BehindBaseBranch.Load(),stale.BehindBaseBranch.Load(),rendered)}
+    runner.CheckForMissingCalls()
+}

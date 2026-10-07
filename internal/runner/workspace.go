@@ -35,6 +35,11 @@ func Prepare(ctx context.Context, task benchmark.Case, dir string) (string, erro
 		if err != nil {
 			return "", err
 		}
+		if task.StripInstructions {
+			if err := stripInstructions(dir); err != nil {
+				return "", err
+			}
+		}
 		if task.Repo.FreshHistory {
 			// Remove upstream objects and remotes only from this disposable clone.
 			if err := os.RemoveAll(filepath.Join(dir, ".git")); err != nil {
@@ -66,6 +71,9 @@ func Prepare(ctx context.Context, task benchmark.Case, dir string) (string, erro
 		if err := os.WriteFile(full, []byte(content), 0600); err != nil {
 			return "", err
 		}
+	}
+	if task.StripInstructions {
+		return "", stripInstructions(dir)
 	}
 	return "", nil
 }

@@ -169,6 +169,22 @@ func Execute(ctx context.Context, cfg benchmark.Config, root string, store *stor
 					cancel()
 				}
 				result.Runs = append(result.Runs, r)
+				if r.Warmup {
+					if r.Status == "skipped" {
+						result.Manifest.WarmupSkippedRuns++
+					} else {
+						result.Manifest.WarmupStartedRuns++
+					}
+				} else if r.Status == "skipped" {
+					result.Manifest.SkippedRuns++
+				} else {
+					result.Manifest.StartedRuns++
+				}
+				result.Manifest.StoppedAgents = stopped
+				if saveErr := storage.WriteJSON(filepath.Join(dir, "manifest.json"), result.Manifest); saveErr != nil && firstErr == nil {
+					firstErr = saveErr
+					cancel()
+				}
 				if progress != nil {
 					phase := "measured"
 					if r.Warmup {
@@ -215,21 +231,6 @@ dispatch:
 	wg.Wait()
 	sort.Slice(result.Runs, func(i, j int) bool { return result.Runs[i].ID < result.Runs[j].ID })
 	result.Manifest.StoppedAgents = stopped
-	for _, r := range result.Runs {
-		if r.Warmup {
-			if r.Status == "skipped" {
-				result.Manifest.WarmupSkippedRuns++
-			} else {
-				result.Manifest.WarmupStartedRuns++
-			}
-			continue
-		}
-		if r.Status == "skipped" {
-			result.Manifest.SkippedRuns++
-		} else {
-			result.Manifest.StartedRuns++
-		}
-	}
 	result.Manifest.FinishedAt = time.Now().UTC()
 	result.Manifest.ElapsedSeconds = time.Since(start).Seconds()
 	if err := storage.WriteJSON(filepath.Join(dir, "manifest.json"), result.Manifest); firstErr == nil {
@@ -250,6 +251,7 @@ func executeOne(parent context.Context, a benchmark.Agent, task benchmark.Case, 
 		return r, err
 	}
 	r = telemetry.Run{ID: id, ExperimentID: experiment, Case: task.Name, Agent: a.Name, Adapter: a.Adapter, Model: a.Model, Settings: snapshotSettings(a), Repeat: repeat, StartedAt: time.Now().UTC(), Status: "error", Metrics: telemetry.Metrics{SchemaVersion: 2, TTFABasis: "unobserved", ToolTimingBasis: "runner_receipt", ToolTimingConfidence: "unverified"}, ArtifactDir: filepath.Join(dir, id)}
+	r.Environment.PermissionPolicy = permissionPolicy(a.Adapter)
 	if err := os.Mkdir(r.ArtifactDir, 0700); err != nil {
 		return r, err
 	}
@@ -274,6 +276,11 @@ func executeOne(parent context.Context, a benchmark.Agent, task benchmark.Case, 
 	}
 	defer os.RemoveAll(workdir)
 	workspace := filepath.Join(workdir, "workspace")
+	prepStart := time.Now()
+	r.Environment.GoCachePolicy = task.GoCache
+	if task.StripInstructions {
+		r.Environment.WorkspaceInstructions = "known_files_stripped_v1"
+	}
 	prepCtx, prepCancel := context.WithTimeout(parent, 60*time.Second)
 	commit, prepErr := Prepare(prepCtx, task, workspace)
 	prepCancel()
@@ -286,6 +293,23 @@ func executeOne(parent context.Context, a benchmark.Agent, task benchmark.Case, 
 		return r, nil
 	}
 	r.Commit = commit
+	env, environmentErr := prepareGoEnvironment(parent, task, workspace, r.ArtifactDir)
+	if environmentErr == nil {
+		var homeEnv []string
+		homeEnv, environmentErr = prepareAgentHome(a, workdir)
+		env = append(env, homeEnv...)
+	}
+	if a.IsolateConfig {
+		r.Environment.IsolationPolicy = "ephemeral_home_auth_only_v1"
+	}
+	preparationSeconds := time.Since(prepStart).Seconds()
+	r.Environment.PreparationSeconds = &preparationSeconds
+	if environmentErr != nil {
+		r.Status = "infrastructure_error"
+		r.Error = environmentErr.Error()
+		r.Failure = &telemetry.Failure{Category: "infrastructure", Code: "environment_preparation", Scope: "attempt", Message: r.Error}
+		return r, nil
+	}
 	adapter, err := adapters.New(a)
 	if err != nil {
 		return r, err
@@ -294,6 +318,7 @@ func executeOne(parent context.Context, a benchmark.Agent, task benchmark.Case, 
 	if err != nil {
 		return r, err
 	}
+	command.Env = append(command.Env, env...)
 	files := make([]*os.File, 0, 4)
 	defer func() {
 		for _, f := range files {
@@ -351,7 +376,7 @@ func executeOne(parent context.Context, a benchmark.Agent, task benchmark.Case, 
 	if p.Err != nil {
 		r.Error = p.Err.Error()
 	}
-	if c.failure == nil && p.ExitCode != nil && *p.ExitCode != 0 {
+	if c.failure == nil && c.diagnosticFailure != nil && ((p.ExitCode != nil && *p.ExitCode != 0) || c.diagnosticFailure.Code == "headless_tool_permission_denied") {
 		c.failure = c.diagnosticFailure
 	}
 	r.Failure = c.failure
@@ -424,6 +449,14 @@ func executeOne(parent context.Context, a benchmark.Agent, task benchmark.Case, 
 		r.Error = retainErr.Error()
 		r.Failure = &telemetry.Failure{Category: "infrastructure", Code: "artifact_capture", Scope: "attempt", Message: r.Error}
 		return r, nil
+	}
+	if task.RetainPatch {
+		if captureErr := retainPatch(parent, workspace, r.ArtifactDir, task.RetainFiles); captureErr != nil {
+			r.Status = "infrastructure_error"
+			r.Error = captureErr.Error()
+			r.Failure = &telemetry.Failure{Category: "infrastructure", Code: "artifact_capture", Scope: "attempt", Message: r.Error}
+			return r, nil
+		}
 	}
 	if !task.Verify.HasChecks() {
 		return r, nil
@@ -521,6 +554,7 @@ func skippedRun(a benchmark.Agent, task benchmark.Case, repeat int, experiment, 
 		return telemetry.Run{}, err
 	}
 	r := telemetry.Run{ID: id, ExperimentID: experiment, Agent: a.Name, Adapter: a.Adapter, Model: a.Model, Case: task.Name, Repeat: repeat, StartedAt: time.Now().UTC(), Status: "skipped", Failure: reason, Error: "Agent stopped: " + reason.Message, Settings: snapshotSettings(a), ArtifactDir: filepath.Join(dir, id), Metrics: telemetry.Metrics{SchemaVersion: 2, TTFABasis: "unobserved", ToolTimingBasis: "runner_receipt", ToolTimingConfidence: "unverified"}}
+	r.Environment.PermissionPolicy = permissionPolicy(a.Adapter)
 	if err := os.Mkdir(r.ArtifactDir, 0700); err != nil {
 		return r, err
 	}

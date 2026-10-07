@@ -1,0 +1,9 @@
+package helpers
+
+import "testing"
+
+func TestASBCoreDescriptionWhitespace(t *testing.T) {
+    body:="  first line\n\n\tindented\n\n"
+    summary,description:=(&CommitsHelper{}).SplitCommitMessageAndDescription("Title\n\n"+body)
+    if summary!="Title" || description!=body {t.Fatalf("round trip lost whitespace: %q / %q",summary,description)}
+}

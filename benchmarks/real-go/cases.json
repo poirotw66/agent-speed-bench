@@ -1,0 +1,34 @@
+{
+  "whitespace": {
+    "repository": "https://github.com/jesseduffield/lazygit.git",
+    "pull_request": "https://github.com/jesseduffield/lazygit/pull/5528",
+    "license": "MIT",
+    "base": "2ad6e1a90497ba6ad520176beed6c99a89fd64ba",
+    "fixed": "0ecf818a739606d4255e009b66309e6e508ce08a",
+    "sources": [
+      "pkg/commands/git_commands/commit.go",
+      "pkg/gui/context/commit_message_context.go",
+      "pkg/gui/controllers.go",
+      "pkg/gui/controllers/commit_message_controller.go",
+      "pkg/gui/controllers/helpers/commits_helper.go",
+      "pkg/gui/controllers/helpers/working_tree_helper.go"
+    ],
+    "test_directory": "lazygit-whitespace",
+    "checks": [
+      {"package": "pkg/commands/git_commands", "name": "commands", "public_pattern": "TestAddCoAuthorToDescription"},
+      {"package": "pkg/gui/controllers/helpers", "name": "helpers", "public_pattern": "TestSplitCommitMessageAndDescription"}
+    ]
+  },
+  "divergence": {
+    "repository": "https://github.com/jesseduffield/lazygit.git",
+    "pull_request": "https://github.com/jesseduffield/lazygit/pull/5536",
+    "license": "MIT",
+    "base": "01b617ea184f9fbbdc7a9dad1bad3977c2ecebb7",
+    "fixed": "b4f79851dba1337e72b6b2f0180239c9d59d4f8f",
+    "sources": ["pkg/commands/git_commands/branch_loader.go"],
+    "test_directory": "lazygit-divergence",
+    "checks": [
+      {"package": "pkg/commands/git_commands", "name": "commands", "public_pattern": "TestGetBehindBaseBranchValuesForAllBranches"}
+    ]
+  }
+}

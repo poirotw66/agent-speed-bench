@@ -3,6 +3,8 @@ package telemetry
 import (
 	"math"
 	"sort"
+	"strings"
+	"unicode/utf8"
 )
 
 // Percentile uses the nearest-rank convention, including for small samples.
@@ -21,7 +23,18 @@ func Calculate(events []Event, wall float64, firstStdout *float64) Metrics {
 	starts := map[string]int64{}
 	finished := map[string]bool{}
 	var latencies []float64
+	var streamFirst, streamLast int64
+	var streamChunks, streamCharacters int64
 	for _, e := range events {
+		if e.Type == "assistant_output" && e.StreamTransport == "responses_http_sse_relay" && e.Text != "" {
+			if streamChunks == 0 {
+				streamFirst = e.ElapsedNS
+			} else {
+				streamCharacters += int64(utf8.RuneCountInString(e.Text))
+			}
+			streamLast = e.ElapsedNS
+			streamChunks++
+		}
 		if m.TTFASeconds == nil && (e.Type == "assistant_output" || e.Type == "tool_started" || e.Type == "assistant_message_receipt" || (e.Type == "final_output" && e.Text != "")) {
 			s := float64(e.ElapsedNS) / 1e9
 			m.TTFASeconds = &s
@@ -90,6 +103,12 @@ func Calculate(events []Event, wall float64, firstStdout *float64) Metrics {
 		gap := wall - *m.TerminalReceiptSeconds
 		m.TerminalToExitSeconds = &gap
 	}
+	if streamChunks > 1 && streamLast > streamFirst {
+		interval := float64(streamLast-streamFirst) / 1e9
+		rate := float64(streamCharacters) / interval
+		m.StreamReceiveSeconds, m.StreamReceiveCharactersPerSecond = &interval, &rate
+		m.StreamReceiveBasis = "first_to_last_sse_relay_delta_excluding_first_chunk"
+	}
 	m.MatchedToolCalls = len(latencies)
 	if m.MatchedToolCalls < m.ToolCalls {
 		m.Warnings = append(m.Warnings, "Some tool calls have no observed finish")
@@ -128,6 +147,12 @@ func add(dst **int64, src *int64) {
 
 // ReportRun reinterprets legacy receipt intervals without rewriting stored evidence.
 func ReportRun(r Run) Run {
+	if r.Failure != nil && IsUsageLimit(r.Failure.Code, r.Failure.Message) {
+		failure := *r.Failure
+		failure.Category, failure.Code, failure.Scope, failure.Retryable = "quota", "usage_limit_reached", "agent", false
+		r.Failure = &failure
+		r.Status, r.Success = "agent_unavailable", nil
+	}
 	if r.Metrics.SchemaVersion < 2 {
 		r.Metrics.ToolReceiptIntervalMeanSeconds = r.Metrics.ToolLatencyMeanSeconds
 		r.Metrics.ToolReceiptIntervalP50Seconds = r.Metrics.ToolLatencyP50Seconds
@@ -140,4 +165,9 @@ func ReportRun(r Run) Run {
 		r.Metrics.ToolTimingConfidence = "unverified"
 	}
 	return r
+}
+
+func IsUsageLimit(code, message string) bool {
+	message = strings.ToLower(message)
+	return code == "insufficient_quota" || code == "usage_limit_reached" || strings.Contains(message, "hit your usage limit") || strings.Contains(message, "usage limit reached")
 }

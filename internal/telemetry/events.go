@@ -13,6 +13,7 @@ type Usage struct {
 }
 
 type Event struct {
+	StreamTransport         string   `json:"stream_transport,omitempty"`
 	ServiceTier             string   `json:"service_tier,omitempty"`
 	ReportedDurationSeconds *float64 `json:"reported_duration_seconds,omitempty"`
 	ReportedDurationSource  string   `json:"reported_duration_source,omitempty"`
@@ -64,36 +65,39 @@ type RawLine struct {
 }
 
 type Metrics struct {
-	AnswerCompleteSeconds          *float64 `json:"answer_complete_seconds"`
-	TerminalReceiptSeconds         *float64 `json:"terminal_receipt_seconds"`
-	TerminalToExitSeconds          *float64 `json:"terminal_to_exit_seconds"`
-	OutputCharacters               *int64   `json:"output_characters"`
-	EffectiveCharactersPerSecond   *float64 `json:"effective_characters_per_second"`
-	ReportedDurationSeconds        *float64 `json:"reported_duration_seconds"`
-	ReportedDurationSource         string   `json:"reported_duration_source,omitempty"`
-	SchemaVersion                  int      `json:"schema_version"`
-	WallSeconds                    float64  `json:"wall_seconds"`
-	FirstStdoutSeconds             *float64 `json:"first_stdout_line_seconds"`
-	TTFASeconds                    *float64 `json:"ttfa_seconds"`
-	TTFABasis                      string   `json:"ttfa_timing_basis"`
-	FirstTextDeltaSeconds          *float64 `json:"first_text_delta_seconds"`
-	FirstCompleteMessageSeconds    *float64 `json:"first_complete_message_seconds"`
-	FirstToolActionSeconds         *float64 `json:"first_tool_action_seconds"`
-	EffectiveOutputTPS             *float64 `json:"effective_output_tokens_per_second"`
-	GenerationTPS                  *float64 `json:"generation_tokens_per_second"`
-	ModelActiveTPS                 *float64 `json:"model_active_tokens_per_second"`
-	Usage                          Usage    `json:"usage"`
-	ToolCalls                      int      `json:"tool_calls"`
-	MatchedToolCalls               int      `json:"matched_tool_calls"`
-	ToolLatencyMeanSeconds         *float64 `json:"tool_latency_mean_seconds"`
-	ToolLatencyP50Seconds          *float64 `json:"tool_latency_p50_seconds"`
-	ToolLatencyP95Seconds          *float64 `json:"tool_latency_p95_seconds"`
-	ToolTimingBasis                string   `json:"tool_timing_basis"`
-	ToolTimingConfidence           string   `json:"tool_timing_confidence"`
-	ToolReceiptIntervalMeanSeconds *float64 `json:"tool_receipt_interval_mean_seconds"`
-	ToolReceiptIntervalP50Seconds  *float64 `json:"tool_receipt_interval_p50_seconds"`
-	ToolReceiptIntervalP95Seconds  *float64 `json:"tool_receipt_interval_p95_seconds"`
-	Warnings                       []string `json:"warnings,omitempty"`
+	StreamReceiveSeconds             *float64 `json:"stream_receive_seconds"`
+	StreamReceiveCharactersPerSecond *float64 `json:"stream_receive_characters_per_second"`
+	StreamReceiveBasis               string   `json:"stream_receive_basis,omitempty"`
+	AnswerCompleteSeconds            *float64 `json:"answer_complete_seconds"`
+	TerminalReceiptSeconds           *float64 `json:"terminal_receipt_seconds"`
+	TerminalToExitSeconds            *float64 `json:"terminal_to_exit_seconds"`
+	OutputCharacters                 *int64   `json:"output_characters"`
+	EffectiveCharactersPerSecond     *float64 `json:"effective_characters_per_second"`
+	ReportedDurationSeconds          *float64 `json:"reported_duration_seconds"`
+	ReportedDurationSource           string   `json:"reported_duration_source,omitempty"`
+	SchemaVersion                    int      `json:"schema_version"`
+	WallSeconds                      float64  `json:"wall_seconds"`
+	FirstStdoutSeconds               *float64 `json:"first_stdout_line_seconds"`
+	TTFASeconds                      *float64 `json:"ttfa_seconds"`
+	TTFABasis                        string   `json:"ttfa_timing_basis"`
+	FirstTextDeltaSeconds            *float64 `json:"first_text_delta_seconds"`
+	FirstCompleteMessageSeconds      *float64 `json:"first_complete_message_seconds"`
+	FirstToolActionSeconds           *float64 `json:"first_tool_action_seconds"`
+	EffectiveOutputTPS               *float64 `json:"effective_output_tokens_per_second"`
+	GenerationTPS                    *float64 `json:"generation_tokens_per_second"`
+	ModelActiveTPS                   *float64 `json:"model_active_tokens_per_second"`
+	Usage                            Usage    `json:"usage"`
+	ToolCalls                        int      `json:"tool_calls"`
+	MatchedToolCalls                 int      `json:"matched_tool_calls"`
+	ToolLatencyMeanSeconds           *float64 `json:"tool_latency_mean_seconds"`
+	ToolLatencyP50Seconds            *float64 `json:"tool_latency_p50_seconds"`
+	ToolLatencyP95Seconds            *float64 `json:"tool_latency_p95_seconds"`
+	ToolTimingBasis                  string   `json:"tool_timing_basis"`
+	ToolTimingConfidence             string   `json:"tool_timing_confidence"`
+	ToolReceiptIntervalMeanSeconds   *float64 `json:"tool_receipt_interval_mean_seconds"`
+	ToolReceiptIntervalP50Seconds    *float64 `json:"tool_receipt_interval_p50_seconds"`
+	ToolReceiptIntervalP95Seconds    *float64 `json:"tool_receipt_interval_p95_seconds"`
+	Warnings                         []string `json:"warnings,omitempty"`
 }
 
 type VerificationResult struct {
@@ -105,6 +109,7 @@ type VerificationResult struct {
 }
 
 type Run struct {
+	Environment  Environment          `json:"environment"`
 	Warmup       bool                 `json:"warmup,omitempty"`
 	Verification []VerificationResult `json:"verification,omitempty"`
 	ID           string               `json:"id"`
@@ -124,4 +129,12 @@ type Run struct {
 	Commit       string               `json:"commit,omitempty"`
 	ArtifactDir  string               `json:"artifact_dir"`
 	Metrics      Metrics              `json:"metrics"`
+}
+
+type Environment struct {
+	GoCachePolicy         string   `json:"go_cache_policy,omitempty"`
+	WorkspaceInstructions string   `json:"workspace_instructions,omitempty"`
+	PermissionPolicy      string   `json:"permission_policy,omitempty"`
+	PreparationSeconds    *float64 `json:"preparation_seconds"`
+	IsolationPolicy       string   `json:"isolation_policy,omitempty"`
 }

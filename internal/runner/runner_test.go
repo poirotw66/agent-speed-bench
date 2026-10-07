@@ -433,6 +433,19 @@ func TestCursorTrustDiagnosticStopsOnlyBlockedAgent(t *testing.T) {
 		t.Fatal(r, err)
 	}
 }
+func TestAgySoftDeniedSuccessfulExitRemainsUngraded(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agy-fixture")
+	script := "#!/bin/sh\nprintf '%s\\n' 'jetski: no output produced - a tool required the command permission that headless mode cannot prompt for, so it was auto-denied.' >&2\nprintf '%s\\n' '{\"event\":\"result\",\"result\":{\"status\":\"SUCCESS\",\"response\":\"\"}}'\nexit 0\n"
+	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	r, err := executeOne(context.Background(), benchmark.Agent{Name: "blocked", Adapter: "agy", Command: path}, fixtureTask(), 1, "soft-denied", dir)
+	if err != nil || r.Status != "agent_unavailable" || r.Success != nil || r.Failure == nil || r.Failure.Code != "headless_tool_permission_denied" || r.Environment.PermissionPolicy != "agy_dangerously_skip_permissions_v1" {
+		t.Fatal(r, err)
+	}
+}
+
 func TestServiceTierSnapshotExcludesSecretsAndDoesNotInferObserved(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CODEX_HOME", home)

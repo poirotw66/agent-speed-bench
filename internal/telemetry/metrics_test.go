@@ -84,3 +84,14 @@ func TestCompletionReceiptAndExitGap(t *testing.T) {
 		t.Fatal("negative exit interval", m)
 	}
 }
+
+func TestSSEReceiveIntervalExcludesFirstChunk(t *testing.T) {
+	events := []Event{{Type: "assistant_output", Text: "first chunk", ElapsedNS: 1000000000, StreamTransport: "responses_http_sse_relay"}, {Type: "assistant_output", Text: "\u4e2d\u6587\u5b57", ElapsedNS: 3000000000, StreamTransport: "responses_http_sse_relay"}}
+	m := Calculate(events, 4, nil)
+	if m.StreamReceiveSeconds == nil || *m.StreamReceiveSeconds != 2 || *m.StreamReceiveCharactersPerSecond != 1.5 || m.GenerationTPS != nil {
+		t.Fatal(m)
+	}
+	if Calculate(events[:1], 4, nil).StreamReceiveSeconds != nil {
+		t.Fatal("single chunk invented interval")
+	}
+}

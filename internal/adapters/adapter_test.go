@@ -151,11 +151,6 @@ func TestCommandsPreservePromptAsData(t *testing.T) {
 		} else if c.Stdin != prompt {
 			t.Fatal(c)
 		}
-		for _, arg := range c.Args {
-			if arg == "--dangerously-skip-permissions" || arg == "--force" || arg == "--dangerously-bypass-approvals-and-sandbox" {
-				t.Fatal("unexpected permission bypass")
-			}
-		}
 	}
 }
 

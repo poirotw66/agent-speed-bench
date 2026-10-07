@@ -1,0 +1,72 @@
+name: controlled-real-go-lazygit-yolo
+warmup_repeats: 0
+repeats: 3
+jobs: 1
+timeout_seconds: 300
+agents:
+  - name: sol-medium
+    isolate_config: true
+    adapter: codex
+    model: gpt-6.1-sol
+    reasoning_effort: medium
+    service_tier: default
+  - name: luna-high
+    isolate_config: true
+    adapter: codex
+    model: gpt-6-luna
+    reasoning_effort: high
+    service_tier: default
+  - name: luna-high-fast
+    isolate_config: true
+    adapter: codex
+    model: gpt-6-luna
+    reasoning_effort: high
+    service_tier: fast
+  - name: cursor-auto
+    isolate_config: true
+    adapter: cursor
+    model: auto
+    trust_workspace: true
+  - name: agy-low
+    isolate_config: true
+    adapter: agy
+    model: gemini-3.8-flash-low
+    reasoning_effort: low
+  - name: agy-medium
+    isolate_config: true
+    adapter: agy
+    model: gemini-3.8-flash-medium
+    reasoning_effort: medium
+  - name: agy-high
+    isolate_config: true
+    adapter: agy
+    model: gemini-3.8-flash-high
+    reasoning_effort: high
+cases:
+  - strip_instructions: true
+    go_cache: warm
+    cache_warmup:
+      - command: go
+        args: [test, -mod=vendor, ./pkg/commands/git_commands, -run, TestGenerateGithubPullRequestMap]
+    name: lazygit-owner-casing
+    prompt: >-
+      GitHub pull request integration fails to associate a local branch with its
+      pull request when repository owner casing differs between the PR API
+      response and the configured remote URL. Repair owner matching while
+      preserving exact branch-name matching and unrelated behavior. Change only
+      pkg/commands/git_commands/github.go. Dependencies are vendored; use
+      go test -mod=vendor ./pkg/commands/git_commands -run TestGenerateGithubPullRequestMap
+      for public tests. Do not access the network.
+    repo:
+      path: ../runs/repos/lazygit
+      commit: 8f258a3650cef809b911df24881712bc6b5d96bd
+      fresh_history: true
+    retain_files: [pkg/commands/git_commands/github.go]
+    verify:
+      timeout_seconds: 180
+      core_tests:
+        - command: ../scripts/verify-lazygit.py
+          args: [core]
+      regression_tests:
+        - command: ../scripts/verify-lazygit.py
+          args: [regression]

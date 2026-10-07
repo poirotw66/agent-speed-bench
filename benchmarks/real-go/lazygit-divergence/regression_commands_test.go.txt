@@ -1,0 +1,13 @@
+package git_commands
+
+import (
+    "testing"
+    "github.com/jesseduffield/lazygit/pkg/commands/models"
+)
+
+func TestASBRegressionEmptyBranches(t *testing.T) {
+    common:=buildGitCommon(commonDeps{gitVersion:&GitVersion{2,40,0,""}})
+    loader:=&BranchLoader{Common:common.Common,GitCommon:common,cmd:common.cmd}
+    main:=&MainBranches{c:common.Common,cmd:common.cmd,existingMainBranches:[]string{"refs/heads/main"},previousMainBranches:common.Common.UserConfig().Git.MainBranches}
+    if err:=loader.GetBehindBaseBranchValuesForAllBranches([]*models.Branch{},main,func(){});err!=nil {t.Fatal(err)}
+}

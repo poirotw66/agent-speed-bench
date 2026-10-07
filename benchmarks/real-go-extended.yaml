@@ -1,0 +1,77 @@
+name: controlled-real-go-extended-yolo
+warmup_repeats: 0
+repeats: 3
+jobs: 1
+timeout_seconds: 600
+agents:
+  - name: luna-high
+    isolate_config: true
+    adapter: codex
+    model: gpt-6-luna
+    reasoning_effort: high
+    service_tier: default
+cases:
+  - name: lazygit-whitespace
+    strip_instructions: true
+    retain_patch: true
+    go_cache: warm
+    cache_warmup:
+      - command: go
+        args: [test, -mod=vendor, ./pkg/commands/git_commands, ./pkg/gui/controllers/helpers, -run, TestAddCoAuthorToDescription]
+    repo:
+      path: ../runs/repos/lazygit
+      commit: 2ad6e1a90497ba6ad520176beed6c99a89fd64ba
+      fresh_history: true
+    prompt: >-
+      Remembering and restoring a commit message loses intentional blank lines
+      and indentation in its body. Repair the commit-message handling so body
+      whitespace survives splitting and restoration, while co-author trailers
+      are appended with clean separators. Preserve summary-only behavior.
+      Modify only the six source paths listed below; use vendored dependencies
+      and do not access the network. Allowed paths: pkg/commands/git_commands/commit.go,
+      pkg/gui/context/commit_message_context.go, pkg/gui/controllers.go,
+      pkg/gui/controllers/commit_message_controller.go,
+      pkg/gui/controllers/helpers/commits_helper.go,
+      pkg/gui/controllers/helpers/working_tree_helper.go.
+    retain_files:
+      - pkg/commands/git_commands/commit.go
+      - pkg/gui/context/commit_message_context.go
+      - pkg/gui/controllers.go
+      - pkg/gui/controllers/commit_message_controller.go
+      - pkg/gui/controllers/helpers/commits_helper.go
+      - pkg/gui/controllers/helpers/working_tree_helper.go
+    verify:
+      timeout_seconds: 300
+      core_tests:
+        - command: ../scripts/verify-real-go.py
+          args: [whitespace, core]
+      regression_tests:
+        - command: ../scripts/verify-real-go.py
+          args: [whitespace, regression]
+  - name: lazygit-divergence
+    strip_instructions: true
+    retain_patch: true
+    go_cache: warm
+    cache_warmup:
+      - command: go
+        args: [test, -mod=vendor, ./pkg/commands/git_commands, -run, TestGetBehindBaseBranchValuesForAllBranches]
+    repo:
+      path: ../runs/repos/lazygit
+      commit: 01b617ea184f9fbbdc7a9dad1bad3977c2ecebb7
+      fresh_history: true
+    prompt: >-
+      Branch divergence from configured base branches is slow because each local
+      branch triggers separate Git commands. Repair pkg/commands/git_commands/branch_loader.go
+      to batch ahead/behind queries with Git ref formatting when supported by Git
+      2.41+, preserve the legacy path on older versions, clear stale values for
+      branches absent from fresh output, and render updated values. Use vendored
+      dependencies and do not access the network. Change only that source file.
+    retain_files: [pkg/commands/git_commands/branch_loader.go]
+    verify:
+      timeout_seconds: 180
+      core_tests:
+        - command: ../scripts/verify-real-go.py
+          args: [divergence, core]
+      regression_tests:
+        - command: ../scripts/verify-real-go.py
+          args: [divergence, regression]

@@ -36,6 +36,8 @@ func run(ctx context.Context, args []string) error {
 		return nil
 	}
 	switch args[0] {
+	case "__responses-agent":
+		return responsesAgent(ctx, args[1:])
 	case "help", "--help", "-h":
 		usage()
 		return nil

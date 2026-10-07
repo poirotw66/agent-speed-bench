@@ -52,8 +52,35 @@ func TestNativeCommandOptions(t *testing.T) {
 	}
 	p, _ = New(benchmark.Agent{Adapter: "agy", Model: "gemini-3.8-flash-high", ReasoningEffort: "high"})
 	c, _ = p.BuildCommand("$(touch nope)", "")
-	if c.Path != "agy" || c.Args[1] != "$(touch nope)" || strings.Join(c.Args[2:], " ") != "--output-format stream-json --model gemini-3.8-flash-high --effort high" {
+	if c.Path != "agy" || c.Args[1] != "$(touch nope)" || strings.Join(c.Args[2:], " ") != "--output-format stream-json --dangerously-skip-permissions --model gemini-3.8-flash-high --effort high" {
 		t.Fatal(c)
+	}
+}
+
+func TestNativeCommandsUseRequestedYoloPolicy(t *testing.T) {
+	for adapter, flag := range map[string]string{"codex": "--yolo", "cursor": "--yolo", "agy": "--dangerously-skip-permissions", "claude": "--dangerously-skip-permissions"} {
+		for _, isolate := range []bool{false, true} {
+			p, err := New(benchmark.Agent{Adapter: adapter, IsolateConfig: isolate})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c, err := p.BuildCommand("fixture", "/workspace")
+			if err != nil {
+				t.Fatal(err)
+			}
+			count := 0
+			for i, arg := range c.Args {
+				if arg == flag {
+					count++
+				}
+				if arg == "--auto-review" || arg == "--mode" || (arg == "--sandbox" && (adapter != "cursor" || i+1 >= len(c.Args) || c.Args[i+1] != "disabled")) {
+					t.Fatal("conflicting permission policy", c)
+				}
+			}
+			if count != 1 {
+				t.Fatal("YOLO flag must appear exactly once", c)
+			}
+		}
 	}
 }
 

@@ -35,7 +35,7 @@ func TestDefaultsAndRelativePaths(t *testing.T) {
 	}
 }
 
-func TestIsolationRequiresCodex(t *testing.T) {
+func TestIsolationRequiresSupportedAdapter(t *testing.T) {
 	cfg, err := loadText(t, validConfig)
 	if err != nil {
 		t.Fatal(err)
@@ -44,9 +44,55 @@ func TestIsolationRequiresCodex(t *testing.T) {
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("unsupported isolation accepted")
 	}
-	cfg.Agents[0].Adapter = "codex"
-	if err := cfg.Validate(); err != nil {
+	for _, adapter := range []string{"codex", "cursor", "agy"} {
+		cfg.Agents[0].Adapter = adapter
+		if err := cfg.Validate(); err != nil {
+			t.Fatal(adapter, err)
+		}
+	}
+}
+
+func TestControlledEnvironmentValidation(t *testing.T) {
+	cfg, err := loadText(t, validConfig)
+	if err != nil {
 		t.Fatal(err)
+	}
+	for _, policy := range []string{"", "cold", "warm", "shared"} {
+		for _, hasWarmup := range []bool{false, true} {
+			cfg.Cases[0].GoCache = policy
+			cfg.Cases[0].CacheWarmup = nil
+			if hasWarmup {
+				cfg.Cases[0].CacheWarmup = []Check{{Command: "go", Args: []string{"test", "./..."}}}
+			}
+			wantValid := policy != "shared" && (policy == "warm") == hasWarmup
+			if (cfg.Validate() == nil) != wantValid {
+				t.Fatalf("policy=%q warmup=%v", policy, hasWarmup)
+			}
+		}
+	}
+	for _, path := range []string{"../../benchmarks/controlled-output.yaml", "../../benchmarks/controlled-real-go.yaml", "../../benchmarks/real-go-extended.yaml"} {
+		if _, err := Load(path); err != nil {
+			t.Fatal(path, err)
+		}
+	}
+}
+
+func TestResponsesConfiguration(t *testing.T) {
+	text := "name: api\nagents:\n - name: a\n   adapter: openai-responses\n   model: test-model\n   api: {key_env: ASB_TEST_KEY, max_output_tokens: 64}\ncases:\n - name: task\n   prompt: hello\n"
+	cfg, err := loadText(t, text)
+	if err != nil || cfg.Agents[0].API.Endpoint != "https://api.openai.com/v1/responses" {
+		t.Fatal(cfg, err)
+	}
+	for _, key := range []string{"", "literal-secret!", "1KEY"} {
+		cfg.Agents[0].API.KeyEnv = key
+		if cfg.Validate() == nil {
+			t.Fatal("invalid authentication variable accepted")
+		}
+	}
+	cfg.Agents[0].API.KeyEnv = "ASB_TEST_KEY"
+	cfg.Agents[0].API.MaxOutputTokens = 0
+	if cfg.Validate() == nil {
+		t.Fatal("missing output cap accepted")
 	}
 }
 func TestConfigRejectsInvalidInput(t *testing.T) {

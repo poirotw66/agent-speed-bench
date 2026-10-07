@@ -20,12 +20,15 @@ func (p *agyParser) BuildCommand(prompt, workdir string) (Command, error) {
 	if path == "" {
 		path = "agy"
 	}
-	args := []string{"-p", prompt, "--output-format", "stream-json"}
+	args := []string{"-p", prompt, "--output-format", "stream-json", "--dangerously-skip-permissions"}
 	if p.agent.Model != "" {
 		args = append(args, "--model", p.agent.Model)
 	}
 	if p.agent.ReasoningEffort != "" {
 		args = append(args, "--effort", p.agent.ReasoningEffort)
+	}
+	if p.agent.IsolateConfig {
+		args = append(args, "--disable-slash-commands")
 	}
 	return Command{Path: path, Args: args}, nil
 }

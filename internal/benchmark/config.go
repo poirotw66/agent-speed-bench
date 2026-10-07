@@ -3,6 +3,7 @@ package benchmark
 import (
 	"errors"
 	"fmt"
+	"github.com/poirotw66/agent-speed-bench/internal/responses"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 )
 
 type Agent struct {
+	API             *API     `yaml:"api,omitempty" json:"api,omitempty"`
 	IsolateConfig   bool     `yaml:"isolate_config,omitempty" json:"isolate_config,omitempty"`
 	TrustWorkspace  bool     `yaml:"trust_workspace,omitempty" json:"trust_workspace,omitempty"`
 	ServiceTier     string   `yaml:"service_tier,omitempty" json:"service_tier,omitempty"`
@@ -23,6 +25,12 @@ type Agent struct {
 	Command         string   `yaml:"command,omitempty" json:"command,omitempty"`
 	Args            []string `yaml:"args,omitempty" json:"args,omitempty"`
 	VersionArgs     []string `yaml:"version_args,omitempty" json:"version_args,omitempty"`
+}
+
+type API struct {
+	Endpoint        string `yaml:"endpoint" json:"endpoint"`
+	KeyEnv          string `yaml:"key_env" json:"key_env"`
+	MaxOutputTokens int    `yaml:"max_output_tokens" json:"max_output_tokens"`
 }
 type Repo struct {
 	FreshHistory bool   `yaml:"fresh_history,omitempty" json:"fresh_history,omitempty"`
@@ -50,13 +58,17 @@ type IntegerSequence struct {
 	EndMarker string `yaml:"end_marker" json:"end_marker"`
 }
 type Case struct {
-	RetainFiles    []string          `yaml:"retain_files,omitempty" json:"retain_files,omitempty"`
-	Name           string            `yaml:"name" json:"name"`
-	Prompt         string            `yaml:"prompt" json:"prompt"`
-	TimeoutSeconds int               `yaml:"timeout_seconds,omitempty" json:"timeout_seconds,omitempty"`
-	Repo           *Repo             `yaml:"repo,omitempty" json:"repo,omitempty"`
-	Files          map[string]string `yaml:"files,omitempty" json:"files,omitempty"`
-	Verify         Verify            `yaml:"verify,omitempty" json:"verify,omitempty"`
+	RetainPatch       bool              `yaml:"retain_patch,omitempty" json:"retain_patch,omitempty"`
+	StripInstructions bool              `yaml:"strip_instructions,omitempty" json:"strip_instructions,omitempty"`
+	GoCache           string            `yaml:"go_cache,omitempty" json:"go_cache,omitempty"`
+	CacheWarmup       []Check           `yaml:"cache_warmup,omitempty" json:"cache_warmup,omitempty"`
+	RetainFiles       []string          `yaml:"retain_files,omitempty" json:"retain_files,omitempty"`
+	Name              string            `yaml:"name" json:"name"`
+	Prompt            string            `yaml:"prompt" json:"prompt"`
+	TimeoutSeconds    int               `yaml:"timeout_seconds,omitempty" json:"timeout_seconds,omitempty"`
+	Repo              *Repo             `yaml:"repo,omitempty" json:"repo,omitempty"`
+	Files             map[string]string `yaml:"files,omitempty" json:"files,omitempty"`
+	Verify            Verify            `yaml:"verify,omitempty" json:"verify,omitempty"`
 }
 type Config struct {
 	WarmupRepeats  int     `yaml:"warmup_repeats,omitempty" json:"warmup_repeats,omitempty"`
@@ -114,6 +126,9 @@ func Load(path string) (Config, error) {
 	}
 	for i := range cfg.Agents {
 		a := &cfg.Agents[i]
+		if a.API != nil && a.API.Endpoint == "" {
+			a.API.Endpoint = "https://api.openai.com/v1/responses"
+		}
 		if a.Adapter == "" {
 			a.Adapter = a.Name
 		}
@@ -129,7 +144,7 @@ func Load(path string) (Config, error) {
 		if c.Verify.TimeoutSeconds == 0 {
 			c.Verify.TimeoutSeconds = 60
 		}
-		for _, checks := range [][]Check{c.Verify.CoreTests, c.Verify.RegressionTests} {
+		for _, checks := range [][]Check{c.Verify.CoreTests, c.Verify.RegressionTests, c.CacheWarmup} {
 			for j := range checks {
 				if strings.ContainsRune(checks[j].Command, filepath.Separator) && !filepath.IsAbs(checks[j].Command) {
 					checks[j].Command = filepath.Join(base, checks[j].Command)
@@ -166,9 +181,19 @@ func (c Config) Validate() error {
 		}
 		seen[a.Name] = true
 		switch a.Adapter {
-		case "codex", "claude", "cursor", "agy", "demo", "generic":
+		case "codex", "claude", "cursor", "agy", "demo", "generic", "openai-responses":
 		default:
 			return fmt.Errorf("unknown adapter %q; use generic for custom CLIs", a.Adapter)
+		}
+		if a.Adapter == "openai-responses" {
+			if a.API == nil || a.Model == "" || !regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`).MatchString(a.API.KeyEnv) || a.API.MaxOutputTokens < 1 || a.API.MaxOutputTokens > 100000 {
+				return fmt.Errorf("agent %s: Responses API requires model, api.key_env and max_output_tokens 1-100000", a.Name)
+			}
+			if err := responses.ValidateEndpoint(a.API.Endpoint); err != nil {
+				return fmt.Errorf("agent %s: %w", a.Name, err)
+			}
+		} else if a.API != nil {
+			return fmt.Errorf("agent %s: api requires openai-responses", a.Name)
 		}
 		if a.Adapter == "generic" && a.Command == "" {
 			return fmt.Errorf("generic agent %s requires command", a.Name)
@@ -179,8 +204,8 @@ func (c Config) Validate() error {
 		if a.TrustWorkspace && a.Adapter != "cursor" {
 			return fmt.Errorf("agent %s: trust_workspace is only supported for cursor", a.Name)
 		}
-		if a.IsolateConfig && a.Adapter != "codex" {
-			return fmt.Errorf("agent %s: isolate_config is supported only for codex", a.Name)
+		if a.IsolateConfig && a.Adapter != "codex" && a.Adapter != "cursor" && a.Adapter != "agy" {
+			return fmt.Errorf("agent %s: isolate_config requires codex, cursor or agy", a.Name)
 		}
 		if a.ServiceTier != "" && (a.Adapter != "codex" || (a.ServiceTier != "default" && a.ServiceTier != "fast")) {
 			return fmt.Errorf("agent %s: service_tier requires codex and default or fast", a.Name)
@@ -189,8 +214,8 @@ func (c Config) Validate() error {
 			return fmt.Errorf("agent %s: agy does not support minimal effort", a.Name)
 		}
 		if a.ReasoningEffort != "" {
-			if a.Adapter != "codex" && a.Adapter != "agy" {
-				return fmt.Errorf("agent %s: reasoning_effort is supported only for codex and agy", a.Name)
+			if a.Adapter != "codex" && a.Adapter != "agy" && a.Adapter != "openai-responses" {
+				return fmt.Errorf("agent %s: reasoning_effort requires codex, agy or openai-responses", a.Name)
 			}
 			switch a.ReasoningEffort {
 			case "minimal", "low", "medium", "high", "xhigh", "max":
@@ -201,6 +226,20 @@ func (c Config) Validate() error {
 	}
 	seen = map[string]bool{}
 	for _, task := range c.Cases {
+		if task.RetainPatch && (task.Repo == nil || len(task.RetainFiles) == 0) {
+			return fmt.Errorf("case %s: retain_patch requires repo and retain_files", task.Name)
+		}
+		if task.GoCache != "" && task.GoCache != "cold" && task.GoCache != "warm" {
+			return fmt.Errorf("case %s: go_cache must be cold or warm", task.Name)
+		}
+		if (task.GoCache == "warm") != (len(task.CacheWarmup) > 0) {
+			return fmt.Errorf("case %s: warm go_cache requires cache_warmup; other policies forbid it", task.Name)
+		}
+		for _, check := range task.CacheWarmup {
+			if strings.TrimSpace(check.Command) == "" {
+				return fmt.Errorf("case %s: cache_warmup requires command", task.Name)
+			}
+		}
 		if !safeName.MatchString(task.Name) || seen[task.Name] {
 			return fmt.Errorf("invalid or duplicate case name: %q", task.Name)
 		}

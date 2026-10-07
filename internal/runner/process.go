@@ -23,6 +23,9 @@ func RunProcess(ctx context.Context, c adapters.Command, dir string, stdout, std
 	start := time.Now()
 	cmd := exec.CommandContext(ctx, c.Path, c.Args...)
 	cmd.Dir = dir
+	if len(c.Env) > 0 {
+		cmd.Env = append(os.Environ(), c.Env...)
+	}
 	cmd.Stdin = strings.NewReader(c.Stdin)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr

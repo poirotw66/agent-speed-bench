@@ -1,0 +1,13 @@
+package git_commands
+
+import "testing"
+
+func TestASBRegressionTrailers(t *testing.T) {
+    for _,tc:=range []struct{body,want string}{
+        {"", "Co-authored-by: Tester <test@example.org>"},
+        {"Body\n\n    keep indentation", "Body\n\n    keep indentation\n\nCo-authored-by: Tester <test@example.org>"},
+        {"Co-authored-by: First <first@example.org>", "Co-authored-by: First <first@example.org>\nCo-authored-by: Tester <test@example.org>"},
+    } {
+        if got:=AddCoAuthorToDescription(tc.body,"Tester <test@example.org>");got!=tc.want {t.Fatalf("got %q, want %q",got,tc.want)}
+    }
+}

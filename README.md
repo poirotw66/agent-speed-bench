@@ -32,14 +32,14 @@ Flags must come before the YAML filename. `run` accepts `-out`, `-db`, and `-job
 
 | Adapter | Execution | Token usage | Tool intervals |
 | --- | --- | --- | --- |
-| `codex` | `codex exec --json --ephemeral --sandbox workspace-write` | From `turn.completed` | Command/MCP/search event receipt intervals |
-| `claude` | `claude --print --output-format stream-json --verbose --include-partial-messages` | Authoritative final `result.usage` | `tool_use` to corresponding `tool_result` |
-| `cursor` | `agent --print --output-format stream-json --stream-partial-output` | Final `result.usage` camelCase counts when supplied | `tool_call` start/completion |
-| `agy` | `agy -p PROMPT --output-format stream-json` | Authoritative `result.usage`, including thinking | Tool step ACTIVE/DONE receipt intervals |
+| `codex` | `codex exec --json --ephemeral --yolo` | From `turn.completed` | Command/MCP/search event receipt intervals |
+| `claude` | `claude --print --output-format stream-json --verbose --include-partial-messages --dangerously-skip-permissions` | Authoritative final `result.usage` | `tool_use` to corresponding `tool_result` |
+| `cursor` | `agent --print --output-format stream-json --stream-partial-output --yolo --sandbox disabled` | Final `result.usage` camelCase counts when supplied | `tool_call` start/completion |
+| `agy` | `agy -p PROMPT --output-format stream-json --dangerously-skip-permissions` | Authoritative `result.usage`, including thinking | Tool step ACTIVE/DONE receipt intervals |
 | `generic` | Explicit executable and argv | Optional canonical JSONL | Optional canonical JSONL |
 | `demo` | Same binary's offline fixture mode | Synthetic | Synthetic |
 
-Built-in commands preserve each CLI's permission protections. Cursor workspace trust defaults to false; `trust_workspace: true` explicitly adds `--trust` for the isolated benchmark workspace. Force and permission-bypass flags are not added. Some coding tasks may need agent-specific permission configuration outside this harness; a recognized workspace trust blocker is unavailable and ungraded. These defaults are recorded through configuration and capabilities, not assumed to give equal permissions across vendors.
+Built-in coding CLIs use the requested YOLO policy: Codex and Cursor use `--yolo`, and agy/Claude use `--dangerously-skip-permissions`. Cursor additionally sets `--sandbox disabled` so inherited settings do not select a different policy. Config isolation does not add conflicting sandbox/auto-review flags. Each run records its adapter-specific permission policy; old sandbox results remain historical and are not pooled with YOLO results. Cursor workspace trust remains an independent setting: `trust_workspace: true` adds `--trust`. Generic commands keep their explicit argv; demo and response-only API adapters have no coding CLI permission mode.
 
 Antigravity has a native `agy` adapter. `benchmarks/antigravity.example.yaml` uses an explicit model and effort; installed model availability and authentication are still required. The adapter retains native raw events, streams response deltas, grades the authoritative final response, and requires terminal `SUCCESS`. Step usage is ignored in favor of final totals. Unknown structured events are retained in raw logs and ignored by the parser. Malformed structured telemetry fails the attempt rather than silently showing success.
 
@@ -164,7 +164,7 @@ runs/<experiment>/
 
 SQLite stores one immutable record per run plus indexed scalar metrics, allowing historical queries. All raw events remain in JSONL for future analysis. Reports can be regenerated from SQLite without rerunning agents. Legacy tool-latency values are relabeled as receipt intervals in reports without altering historical records; legacy TTFA basis remains unspecified. Historical error grades cannot be recovered from absent structured evidence. Interruptions preserve completed/dispatched attempts; jobs not yet dispatched have no run records. Inspect the manifest config and observed record count for an interrupted matrix. An abrupt OS kill can leave a partial experiment or temporary workspace; no crash-resume mechanism is provided.
 
-Artifacts are local and ignored by Git. New files use private permissions. Raw CLI output and config snapshots can contain private task contents; the tool does not redact or upload them. Prepared workspaces are removed after each attempt, so this version retains telemetry and verifier output, not generated patches.
+Artifacts are local and ignored by Git. New files use private permissions. Raw CLI output and config snapshots can contain private task contents; the tool does not redact or upload them. Prepared workspaces are removed after each attempt, and optional allowlisted source/patch capture preserves submissions for later inspection.
 
 ## Development
 
@@ -259,4 +259,46 @@ Preparation downloads the pinned repository into ignored `runs/repos/lazygit` an
 
 Optional `repo.fresh_history: true` removes upstream Git objects and remotes from the disposable clone and creates a single base commit. The run's `commit` remains the original upstream SHA and the manifest records the policy. The source repository remains intact. It does not remove repository instructions or prevent an agent from accessing other host files.
 
-Optional Codex-only `isolate_config: true` adds `--ignore-user-config`, `--ignore-rules`, and disables memories, plugins, apps, browser_use, and computer_use. It records `settings.config_status: user_config_ignored` rather than reporting ignored user settings as active. Authentication still uses CODEX_HOME; AGENTS.md, skills, managed policy, environment, and server cache are not claimed to be isolated. Other adapters reject this option. Both options default to false, preserving existing profiles. Use a compatible Codex CLI; older versions may reject these flags. The CLI definitions are documented in the [official command reference](https://learn.chatgpt.com/docs/developer-commands).
+Optional `isolate_config: true` now supports Codex, Cursor, and agy. It creates a private temporary HOME and copies only the supported login data. Codex additionally ignores user config/rules and disables memories, plugins, apps, browser/computer use and project instruction discovery. Coding CLI calls use the YOLO policy above independently of config isolation; no sandbox permission settings are generated in the temporary home. Vendor permission systems are recorded separately and are not equivalent. Cursor may read its existing macOS Keychain login into a temporary private credential file; agy reuses its existing OAuth token. This does not repair or change system Keychain settings. Temporary credentials are removed on normal cleanup; abrupt termination may leave the private temporary directory.
+
+Optional case-level `strip_instructions: true` removes known agent instruction files and configuration directories from disposable workspaces without traversing symlinks. This is a versioned allowlist, not complete host, network, managed-policy, environment or server-cache isolation. Both options default to false. Use compatible CLIs; older versions may reject the isolation flags.
+
+## Controlled comparisons and retained submissions
+
+`benchmarks/controlled-output.yaml` schedules all seven requested settings, three output lengths, one warmup per setting/case, and ten measured repeats, serially. `benchmarks/controlled-real-go.yaml` schedules three owner-casing attempts per setting. Run these profiles separately to avoid competing local work. A quota or authentication blocker stops future calls for that setting and leaves them ungraded; an incomplete matrix must not be advertised as a completed comparison.
+
+`go_cache: cold` creates independent empty Go caches for each attempt. `go_cache: warm` requires trusted `cache_warmup` commands against the pinned baseline before starting the agent clock. Both policies use vendored dependencies, disable module lookup and automatic toolchain downloads, and record preparation time separately. They do not establish equal server cache state. Existing profiles retain their inherited cache behavior.
+
+Two more authentic cases cover commit-message whitespace ([PR #5528](https://github.com/jesseduffield/lazygit/pull/5528)) and batched branch divergence ([PR #5536](https://github.com/jesseduffield/lazygit/pull/5536)). The whitespace submission allows six functional source files; external grading focuses on splitting/co-author behavior rather than the full interactive UI. Pinned commits, source allowlists and test packages are in `benchmarks/real-go/cases.json`.
+
+```sh
+python3 scripts/prepare-real-go.py
+./bin/agentspeedbench run benchmarks/real-go-extended.yaml
+# Replace ATTEMPT_DIR with the artifact directory of one whitespace attempt.
+python3 scripts/verify-real-go.py whitespace core ATTEMPT_DIR/candidate --retained
+python3 scripts/verify-real-go.py whitespace regression ATTEMPT_DIR/candidate --retained
+```
+
+`retain_patch: true` requires a repository and `retain_files`. It records `candidate.patch.txt` for the allowlisted submitted paths, including new files, plus `source_manifest.json` with SHA-256 hashes and byte counts. Retained regrading checks those hashes and reconstructs the trusted baseline/dependencies; it does not trust candidate tests. These artifacts contain submitted source, so inspect them before sharing.
+
+Reports separate cache, instruction, isolation and permission policies and show preparation median, wall-time quartiles and range. Quartiles/ranges describe the sample, not confidence intervals. Explicit historical quota evidence is interpreted as unavailable/ungraded in the report without rewriting stored records. Quota and infrastructure failures are excluded from wall-speed samples. An explicit agy headless auto-denial is unavailable/ungraded even when the CLI exits zero; see the [official headless permission behavior](https://www.antigravity.google/docs/cli/headless/). Manifests are atomically checkpointed after each recorded attempt; interrupted experiments remain incomplete and are not automatically resumed.
+
+## Response-only API streaming
+
+The `openai-responses` adapter relays HTTP SSE events and has no coding tools. It requires an explicit model, an environment-variable name for authentication, and an output-token limit. Example agent configuration (replace the model with one available to your API account):
+
+```yaml
+name: api-response
+adapter: openai-responses
+model: YOUR_API_MODEL
+api:
+  endpoint: https://api.openai.com/v1/responses
+  key_env: OPENAI_API_KEY
+  max_output_tokens: 2048
+```
+
+The key is read from the environment and is not written to configuration or artifacts. Requests use `stream: true`, `store: false`, and no automatic retries. HTTPS is required except loopback HTTP for offline tests; redirects are rejected. Raw provider output is retained, so prompts and responses should be suitable for local storage. Provider errors are classified without retaining HTTP error bodies.
+
+The first-to-last SSE delta receipt interval and Unicode characters/s exclude the first chunk from the numerator. They are client relay observations affected by buffering, not decoding or model-active TPS. Native total output tokens may include reasoning; accounting is labeled separately. Missing usage or a single delta leaves unsupported rates unknown. Live API testing still requires a chosen provider/model, authentication environment variable and spending limit; no live API calls have been made for this increment. See the [official streaming guide](https://developers.openai.com/api/docs/guides/streaming-responses).
+
+Current local evidence: isolated short-response smoke succeeded for all seven settings after correcting Cursor credential reuse; agy completed 50 calls without Keychain/authentication diagnostics in the interrupted formal matrix. The cache-controlled owner-casing smoke passed both scoring layers. Both added real cases passed base-fails/fixed-passes gates. These checks validate the workflow, not a complete speed ranking or system Keychain repair.

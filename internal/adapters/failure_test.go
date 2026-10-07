@@ -38,3 +38,24 @@ func TestReasoningEffortPassedAsCLIOverride(t *testing.T) {
 		t.Fatal(command, err)
 	}
 }
+
+func TestQuotaIsUngradedAndStopsFutureCalls(t *testing.T) {
+	for _, raw := range []string{`{"message":"You have hit your usage limit. Try again later."}`, `{"status":429,"error":{"code":"insufficient_quota"}}`} {
+		f := ClassifyFailure([]byte(raw))
+		if f.Category != "quota" || f.Code != "usage_limit_reached" || f.Scope != "agent" || f.Retryable {
+			t.Fatal(f)
+		}
+	}
+}
+
+func TestAgyHeadlessPermissionDiagnostic(t *testing.T) {
+	agy, _ := New(benchmark.Agent{Adapter: "agy"})
+	line := []byte(`jetski: no output produced — a tool required the "command" permission that headless mode cannot prompt for, so it was auto-denied.`)
+	f := DiagnosticFailure(agy, line)
+	if f == nil || f.Category != "permission" || f.Scope != "agent" || f.Retryable {
+		t.Fatal(f)
+	}
+	if DiagnosticFailure(agy, []byte("A tool permission was configured")) != nil {
+		t.Fatal("ordinary warning classified as blocker")
+	}
+}

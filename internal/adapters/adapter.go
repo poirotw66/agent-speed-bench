@@ -17,6 +17,7 @@ type Command struct {
 	Path  string
 	Args  []string
 	Stdin string
+	Env   []string
 }
 type Capabilities struct {
 	StructuredOutput bool   `json:"structured_output"`
@@ -41,6 +42,8 @@ type parser struct {
 
 func New(a benchmark.Agent) (Adapter, error) {
 	switch a.Adapter {
+	case "openai-responses":
+		return &responsesParser{agent: a}, nil
 	case "agy":
 		return &agyParser{agent: a}, nil
 	case "codex", "claude", "cursor", "generic", "demo":
@@ -57,9 +60,10 @@ func (p *parser) BuildCommand(prompt, workdir string) (Command, error) {
 		if c.Path == "" {
 			c.Path = "codex"
 		}
-		c.Args = []string{"exec", "--json", "--ephemeral", "--sandbox", "workspace-write", "--skip-git-repo-check", "--color", "never"}
+		c.Args = []string{"exec", "--json", "--ephemeral", "--yolo", "--skip-git-repo-check", "--color", "never"}
 		if p.agent.IsolateConfig {
 			c.Args = append(c.Args, "--ignore-user-config", "--ignore-rules")
+			c.Args = append(c.Args, "--config", "project_doc_max_bytes=0")
 			for _, feature := range []string{"memories", "plugins", "apps", "browser_use", "computer_use"} {
 				c.Args = append(c.Args, "--disable", feature)
 			}
@@ -82,7 +86,7 @@ func (p *parser) BuildCommand(prompt, workdir string) (Command, error) {
 		if c.Path == "" {
 			c.Path = "claude"
 		}
-		c.Args = []string{"--print", "--output-format", "stream-json", "--verbose", "--include-partial-messages"}
+		c.Args = []string{"--print", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--dangerously-skip-permissions"}
 		if p.agent.Model != "" {
 			c.Args = append(c.Args, "--model", p.agent.Model)
 		}
@@ -91,7 +95,7 @@ func (p *parser) BuildCommand(prompt, workdir string) (Command, error) {
 		if c.Path == "" {
 			c.Path = "agent"
 		}
-		c.Args = []string{"--print", "--output-format", "stream-json", "--stream-partial-output"}
+		c.Args = []string{"--print", "--output-format", "stream-json", "--stream-partial-output", "--yolo", "--sandbox", "disabled"}
 		if p.agent.Model != "" {
 			c.Args = append(c.Args, "--model", p.agent.Model)
 		}
@@ -386,6 +390,13 @@ func cursorUsage(m map[string]json.RawMessage) map[string]json.RawMessage {
 
 // DiagnosticFailure recognizes an actionable stderr blocker, not arbitrary warnings.
 func DiagnosticFailure(a Adapter, line []byte) *telemetry.Failure {
+	message := strings.ToLower(strings.TrimSpace(string(line)))
+	if _, ok := a.(*agyParser); ok && strings.HasPrefix(message, "jetski: no output produced") && strings.Contains(message, "permission") && strings.Contains(message, "auto-denied") {
+		return &telemetry.Failure{Category: "permission", Code: "headless_tool_permission_denied", Scope: "agent", Retryable: false, Message: "agy headless tool permission was denied; configure sandbox permissions before benchmarking coding tasks"}
+	}
+	if strings.HasPrefix(message, "error: authentication required") {
+		return &telemetry.Failure{Category: "authentication", Code: "authentication_required", Scope: "agent", Retryable: false, Message: "CLI authentication is required"}
+	}
 	p, ok := a.(*parser)
 	if ok && p.agent.Adapter == "cursor" && strings.TrimSpace(string(line)) == "⚠ Workspace Trust Required" {
 		return &telemetry.Failure{Category: "permission", Code: "workspace_trust_required", Scope: "agent", Retryable: false, Message: "Cursor workspace trust is required; enable trust_workspace only for an authorized benchmark workspace"}
