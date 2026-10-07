@@ -1,0 +1,14 @@
+package candidate
+
+import (
+	"reflect"
+	"testing"
+)
+
+func TestBehavior(t *testing.T) {
+	xs := []int{4, 3, 4, -1}
+	before := append([]int(nil), xs...)
+	if !reflect.DeepEqual(Unique(xs), []int{4, 3, -1}) || !reflect.DeepEqual(xs, before) || len(Unique(nil)) != 0 {
+		t.Fatal("regression")
+	}
+}

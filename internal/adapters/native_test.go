@@ -109,3 +109,17 @@ func TestGenericRejectsInvalidNewTelemetry(t *testing.T) {
 		}
 	}
 }
+
+func TestCodexReasoningAndCacheWriteAliases(t *testing.T) {
+	p, _ := New(benchmark.Agent{Adapter: "codex"})
+	e, err := p.ParseEvent([]byte(`{"type":"turn.completed","usage":{"output_tokens":222,"reasoning_output_tokens":13,"cache_write_input_tokens":0}}`))
+	if err != nil || *e[0].Usage.ThinkingTokens != 13 || *e[0].Usage.CacheWriteTokens != 0 || *e[0].Usage.OutputTokens != 222 {
+		t.Fatal(e, err)
+	}
+	for _, raw := range []string{`{"reasoning_output_tokens":-1}`, `{"cache_write_input_tokens":1.5}`, `{"thinking_tokens":2,"reasoning_output_tokens":3}`} {
+		p, _ := New(benchmark.Agent{Adapter: "codex"})
+		if _, err := p.ParseEvent([]byte(`{"type":"turn.completed","usage":` + raw + `}`)); err == nil {
+			t.Fatal(raw)
+		}
+	}
+}

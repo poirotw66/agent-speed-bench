@@ -1,0 +1,11 @@
+package candidate
+
+import (
+	"testing"
+)
+
+func TestBehavior(t *testing.T) {
+	if SumInclusive(-3, -1) != -6 || SumInclusive(4, 2) != 0 || SumInclusive(-2, 2) != 0 {
+		t.Fatal("regression")
+	}
+}

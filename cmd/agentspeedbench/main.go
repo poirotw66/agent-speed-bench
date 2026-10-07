@@ -82,6 +82,9 @@ func run(ctx context.Context, args []string) error {
 			return runErr
 		}
 		for _, r := range result.Runs {
+			if r.Warmup {
+				continue
+			}
 			if r.Status != "completed" || (r.Success != nil && !*r.Success) {
 				return errors.New("one or more benchmark attempts failed; inspect report.html")
 			}

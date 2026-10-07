@@ -1,0 +1,89 @@
+name: go-engineering-fixtures
+warmup_repeats: 0
+repeats: 3
+jobs: 1
+timeout_seconds: 300
+agents:
+  - name: sol-medium
+    adapter: codex
+    model: gpt-6.1-sol
+    reasoning_effort: medium
+    service_tier: default
+  - name: luna-high
+    adapter: codex
+    model: gpt-6-luna
+    reasoning_effort: high
+    service_tier: default
+  - name: luna-high-fast
+    adapter: codex
+    model: gpt-6-luna
+    reasoning_effort: high
+    service_tier: fast
+  - name: cursor-auto
+    adapter: cursor
+    model: auto
+    trust_workspace: true
+  - name: agy-low
+    adapter: agy
+    model: gemini-3.8-flash-low
+    reasoning_effort: low
+  - name: agy-medium
+    adapter: agy
+    model: gemini-3.8-flash-medium
+    reasoning_effort: medium
+  - name: agy-high
+    adapter: agy
+    model: gemini-3.8-flash-high
+    reasoning_effort: high
+cases:
+  - name: clamp
+    prompt: Repair candidate.go. Clamp must return the upper bound when the input exceeds it. Preserve in-range and lower-bound behavior. Assume lo <= hi. Keep the exported function signature. Modify only candidate.go; use no external dependencies.
+    retain_files: [candidate.go]
+    files:
+      go.mod: "module candidate\n\ngo 1.26.0\n"
+      candidate.go: |
+        package candidate
+        
+        func Clamp(x, lo, hi int) int { if x < lo { return lo }; if x > hi { return lo }; return x }
+    verify:
+      timeout_seconds: 60
+      core_tests:
+        - command: ../scripts/verify-go-case.py
+          args: [clamp, core]
+      regression_tests:
+        - command: ../scripts/verify-go-case.py
+          args: [clamp, regression]
+  - name: dedupe
+    prompt: Repair candidate.go. Unique must retain zero values while removing duplicates. Preserve the order of first appearance and do not mutate the input. Keep the exported function signature. Modify only candidate.go; use no external dependencies.
+    retain_files: [candidate.go]
+    files:
+      go.mod: "module candidate\n\ngo 1.26.0\n"
+      candidate.go: |
+        package candidate
+        
+        func Unique(xs []int) []int { seen:=map[int]bool{}; out:=[]int{}; for _,x:=range xs { if x == 0 {continue}; if !seen[x] {seen[x]=true;out=append(out,x)} }; return out }
+    verify:
+      timeout_seconds: 60
+      core_tests:
+        - command: ../scripts/verify-go-case.py
+          args: [dedupe, core]
+      regression_tests:
+        - command: ../scripts/verify-go-case.py
+          args: [dedupe, regression]
+  - name: range
+    prompt: Repair candidate.go. SumInclusive must include both endpoints. Preserve negative and reversed-range behavior. Inputs are bounded between -10000 and 10000. Keep the exported function signature. Modify only candidate.go; use no external dependencies.
+    retain_files: [candidate.go]
+    files:
+      go.mod: "module candidate\n\ngo 1.26.0\n"
+      candidate.go: |
+        package candidate
+        
+        func SumInclusive(lo, hi int) int { sum:=0; for x:=lo;x<hi;x++ {sum+=x}; return sum }
+    verify:
+      timeout_seconds: 60
+      core_tests:
+        - command: ../scripts/verify-go-case.py
+          args: [range, core]
+      regression_tests:
+        - command: ../scripts/verify-go-case.py
+          args: [range, regression]

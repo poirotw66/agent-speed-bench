@@ -91,3 +91,20 @@ func TestNativeOptionsAndExamples(t *testing.T) {
 		}
 	}
 }
+
+func TestNewMeasurementConfigsAndInvalidControls(t *testing.T) {
+	for _, p := range []string{"../../benchmarks/output-lengths.yaml", "../../benchmarks/go-engineering.yaml"} {
+		cfg, err := Load(p)
+		if err != nil || len(cfg.Cases) != 3 {
+			t.Fatal(cfg, err)
+		}
+		if len(cfg.Cases[0].Verify.CoreTests) > 0 && !filepath.IsAbs(cfg.Cases[0].Verify.CoreTests[0].Command) {
+			t.Fatal(cfg)
+		}
+	}
+	for _, tail := range []string{"warmup_repeats: -1\n", "warmup_repeats: 101\n", "cases:\n - name: c\n   prompt: hi\n   retain_files: [../outside]\n", "cases:\n - name: c\n   prompt: hi\n   verify:\n     core_tests: [{args: [bad]}]\n"} {
+		if _, err := loadText(t, validConfig+tail); err == nil {
+			t.Fatal(tail)
+		}
+	}
+}

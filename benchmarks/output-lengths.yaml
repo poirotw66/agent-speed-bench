@@ -1,0 +1,50 @@
+name: cli-output-lengths
+warmup_repeats: 1
+repeats: 10
+jobs: 1
+timeout_seconds: 300
+agents:
+  - name: sol-medium
+    adapter: codex
+    model: gpt-6.1-sol
+    reasoning_effort: medium
+    service_tier: default
+  - name: luna-high
+    adapter: codex
+    model: gpt-6-luna
+    reasoning_effort: high
+    service_tier: default
+  - name: luna-high-fast
+    adapter: codex
+    model: gpt-6-luna
+    reasoning_effort: high
+    service_tier: fast
+  - name: cursor-auto
+    adapter: cursor
+    model: auto
+    trust_workspace: true
+  - name: agy-low
+    adapter: agy
+    model: gemini-3.8-flash-low
+    reasoning_effort: low
+  - name: agy-medium
+    adapter: agy
+    model: gemini-3.8-flash-medium
+    reasoning_effort: medium
+  - name: agy-high
+    adapter: agy
+    model: gemini-3.8-flash-high
+    reasoning_effort: high
+cases:
+  - name: short
+    prompt: Print integers 1 through 100, one per line, followed by BENCH_DONE on its own line. Do not call tools, modify files, or add commentary.
+    verify:
+      integer_sequence: {start: 1, end: 100, end_marker: BENCH_DONE}
+  - name: medium
+    prompt: Print integers 1 through 500, one per line, followed by BENCH_DONE on its own line. Do not call tools, modify files, or add commentary.
+    verify:
+      integer_sequence: {start: 1, end: 500, end_marker: BENCH_DONE}
+  - name: long
+    prompt: Print integers 1 through 2000, one per line, followed by BENCH_DONE on its own line. Do not call tools, modify files, or add commentary.
+    verify:
+      integer_sequence: {start: 1, end: 2000, end_marker: BENCH_DONE}

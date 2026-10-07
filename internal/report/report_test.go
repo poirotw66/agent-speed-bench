@@ -87,3 +87,36 @@ func TestThinkingDurationAndTierRemainDistinct(t *testing.T) {
 		t.Fatal("accounting bases pooled")
 	}
 }
+
+func TestWarmupsExcludedButRetainedInHistory(t *testing.T) {
+	r := telemetry.Run{Agent: "a", Case: "c", Warmup: true, Status: "completed", Metrics: telemetry.Metrics{SchemaVersion: 2, WallSeconds: 100}}
+	measured := r
+	measured.Warmup = false
+	measured.Metrics.WallSeconds = 2
+	g := Aggregate([]telemetry.Run{r, measured})
+	if len(g) != 1 || g[0].Runs != 1 || *g[0].WallP50 != 2 {
+		t.Fatal(g)
+	}
+	var out bytes.Buffer
+	if err := HTML(&out, []telemetry.Run{r, measured}); err != nil || !strings.Contains(out.String(), "warmup") || !strings.Contains(out.String(), "measured") {
+		t.Fatal(err)
+	}
+}
+
+func TestCharacterAndReceiptStatisticsAreRendered(t *testing.T) {
+	rate, answer, gap, count := 10.0, 2.0, 1.0, int64(30)
+	r := telemetry.Run{Status: "completed", Metrics: telemetry.Metrics{SchemaVersion: 2, WallSeconds: 3, EffectiveCharactersPerSecond: &rate, OutputCharacters: &count, AnswerCompleteSeconds: &answer, TerminalToExitSeconds: &gap}}
+	g := Aggregate([]telemetry.Run{r})
+	if len(g) != 1 || *g[0].CharactersPerSecondP50 != 10 || *g[0].AnswerCompleteP50 != 2 || *g[0].ExitGapP50 != 1 {
+		t.Fatal(g)
+	}
+	var out bytes.Buffer
+	if err := HTML(&out, []telemetry.Run{r}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Characters/s p50: 10.000", "Characters: 30", "Answer p50: 2.000", "Small sample"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatal(want)
+		}
+	}
+}

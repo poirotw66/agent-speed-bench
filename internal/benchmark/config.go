@@ -27,7 +27,14 @@ type Repo struct {
 	Path   string `yaml:"path" json:"path"`
 	Commit string `yaml:"commit" json:"commit"`
 }
+type Check struct {
+	Command string   `yaml:"command" json:"command"`
+	Args    []string `yaml:"args,omitempty" json:"args,omitempty"`
+}
+
 type Verify struct {
+	CoreTests       []Check          `yaml:"core_tests,omitempty" json:"core_tests,omitempty"`
+	RegressionTests []Check          `yaml:"regression_tests,omitempty" json:"regression_tests,omitempty"`
 	Command         string           `yaml:"command,omitempty" json:"command,omitempty"`
 	Args            []string         `yaml:"args,omitempty" json:"args,omitempty"`
 	OutputContains  string           `yaml:"output_contains,omitempty" json:"output_contains,omitempty"`
@@ -41,6 +48,7 @@ type IntegerSequence struct {
 	EndMarker string `yaml:"end_marker" json:"end_marker"`
 }
 type Case struct {
+	RetainFiles    []string          `yaml:"retain_files,omitempty" json:"retain_files,omitempty"`
 	Name           string            `yaml:"name" json:"name"`
 	Prompt         string            `yaml:"prompt" json:"prompt"`
 	TimeoutSeconds int               `yaml:"timeout_seconds,omitempty" json:"timeout_seconds,omitempty"`
@@ -49,6 +57,7 @@ type Case struct {
 	Verify         Verify            `yaml:"verify,omitempty" json:"verify,omitempty"`
 }
 type Config struct {
+	WarmupRepeats  int     `yaml:"warmup_repeats,omitempty" json:"warmup_repeats,omitempty"`
 	Name           string  `yaml:"name" json:"name"`
 	Repeats        int     `yaml:"repeats" json:"repeats"`
 	Jobs           int     `yaml:"jobs" json:"jobs"`
@@ -118,6 +127,13 @@ func Load(path string) (Config, error) {
 		if c.Verify.TimeoutSeconds == 0 {
 			c.Verify.TimeoutSeconds = 60
 		}
+		for _, checks := range [][]Check{c.Verify.CoreTests, c.Verify.RegressionTests} {
+			for j := range checks {
+				if strings.ContainsRune(checks[j].Command, filepath.Separator) && !filepath.IsAbs(checks[j].Command) {
+					checks[j].Command = filepath.Join(base, checks[j].Command)
+				}
+			}
+		}
 		if c.Repo != nil && !filepath.IsAbs(c.Repo.Path) {
 			c.Repo.Path = filepath.Join(base, c.Repo.Path)
 		}
@@ -131,6 +147,9 @@ func Load(path string) (Config, error) {
 func (c Config) Validate() error {
 	if !safeName.MatchString(c.Name) {
 		return errors.New("name must be a safe identifier of 1-80 characters")
+	}
+	if c.WarmupRepeats < 0 || c.WarmupRepeats > 100 {
+		return errors.New("warmup_repeats must be 0-100")
 	}
 	if c.Repeats < 1 || c.Repeats > 1000 || c.Jobs < 1 || c.Jobs > 64 || c.TimeoutSeconds < 1 || c.TimeoutSeconds > 86400 {
 		return errors.New("repeats must be 1-1000, jobs 1-64, timeout_seconds 1-86400")
@@ -193,9 +212,21 @@ func (c Config) Validate() error {
 		if task.Repo != nil && len(task.Files) > 0 {
 			return fmt.Errorf("case %s cannot combine repo and seed files", task.Name)
 		}
+		for _, path := range task.RetainFiles {
+			if !SafePath(path) {
+				return fmt.Errorf("unsafe retained path: %q", path)
+			}
+		}
 		for path := range task.Files {
 			if !SafePath(path) {
 				return fmt.Errorf("unsafe seed path: %q", path)
+			}
+		}
+		for _, checks := range [][]Check{task.Verify.CoreTests, task.Verify.RegressionTests} {
+			for _, check := range checks {
+				if strings.TrimSpace(check.Command) == "" {
+					return fmt.Errorf("case %s: scoring command is required", task.Name)
+				}
 			}
 		}
 		if task.Verify.Command == "" && len(task.Verify.Args) > 0 {

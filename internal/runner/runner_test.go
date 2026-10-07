@@ -435,3 +435,71 @@ printf '%s\n' '{"event":"step_update","step_update":{"step_type":"agent_response
 		t.Fatal(r, err)
 	}
 }
+
+func TestWarmupBarrierPersistenceAndMeasuredCounts(t *testing.T) {
+	dir := t.TempDir()
+	store, err := storage.Open(filepath.Join(dir, "runs.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	cfg := benchmark.Config{Name: "warmup", WarmupRepeats: 1, Repeats: 2, Jobs: 2, TimeoutSeconds: 2, Cases: []benchmark.Case{fixtureTask()}, Agents: []benchmark.Agent{{Name: "a", Adapter: "generic", Command: "sh", Args: []string{"-c", "sleep 0.05; printf Done"}}, {Name: "b", Adapter: "generic", Command: "sh", Args: []string{"-c", "printf Done"}}}}
+	result, err := Execute(context.Background(), cfg, dir, store, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Runs) != 6 || result.Manifest.WarmupStartedRuns != 2 || result.Manifest.StartedRuns != 4 || result.Manifest.PlannedRuns != 4 {
+		t.Fatal(result.Manifest)
+	}
+	latestWarm := time.Time{}
+	for _, r := range result.Runs {
+		if r.Warmup {
+			end := r.StartedAt.Add(time.Duration(r.Metrics.WallSeconds * 1e9))
+			if end.After(latestWarm) {
+				latestWarm = end
+			}
+		}
+	}
+	for _, r := range result.Runs {
+		if !r.Warmup && r.StartedAt.Before(latestWarm) {
+			t.Fatal("measurement overlapped warmup")
+		}
+		data, err := os.ReadFile(filepath.Join(r.ArtifactDir, "run.json"))
+		var saved telemetry.Run
+		if err != nil || json.Unmarshal(data, &saved) != nil || saved.Warmup != r.Warmup {
+			t.Fatal(r, err)
+		}
+	}
+	stored, err := store.Runs(result.Manifest.ExperimentID)
+	if err != nil || len(stored) != 6 {
+		t.Fatal(stored, err)
+	}
+}
+func TestCoreRegressionScoringAndRetainedSource(t *testing.T) {
+	task := fixtureTask()
+	task.Files = map[string]string{"candidate.go": "source"}
+	task.RetainFiles = []string{"candidate.go"}
+	task.Verify.CoreTests = []benchmark.Check{{Command: "sh", Args: []string{"-c", "exit 1"}}}
+	task.Verify.RegressionTests = []benchmark.Check{{Command: "sh", Args: []string{"-c", "exit 0"}}}
+	r, err := executeOne(context.Background(), benchmark.Agent{Name: "fixture", Adapter: "generic", Command: "sh", Args: []string{"-c", `printf '\344\275\240\345\245\275'`}}, task, 1, "layers", t.TempDir())
+	if err != nil || r.Success == nil || *r.Success || len(r.Verification) != 2 || r.Verification[0].Passed || !r.Verification[1].Passed || *r.Metrics.OutputCharacters != 3 {
+		t.Fatal(r, err)
+	}
+	data, err := os.ReadFile(filepath.Join(r.ArtifactDir, "candidate", "candidate.go.txt"))
+	if err != nil || string(data) != "source" {
+		t.Fatal(err)
+	}
+}
+func TestRetainedFilesCannotEscapeWorkspace(t *testing.T) {
+	work := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(outside, []byte("canary"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(work, "candidate.go")); err != nil {
+		t.Fatal(err)
+	}
+	if err := retainFiles(work, t.TempDir(), []string{"candidate.go"}); err == nil {
+		t.Fatal("escaped capture")
+	}
+}

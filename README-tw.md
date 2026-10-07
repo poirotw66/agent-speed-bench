@@ -101,3 +101,17 @@ cases:
 - Codex 的 `service_tier: fast` 會加入 tier override 與 `--enable fast_mode`；requested、configured、observed 分開記錄。成功請求不證明實際 Fast tier，也不保證 1.5 倍。CLI 未回報時 observed 保持未知。[Fast 設定文件](https://learn.chatgpt.com/docs/agent-configuration/speed?site_variant=chatgpt)。
 
 歷史 run 不改寫；新欄位需重新測試才能取得。七組完整設定見 `benchmarks/native-comparison.yaml`，其中 Cursor 明確信任測試 workspace；使用 repo 或 seed files 前請核對此設定。
+
+## 新的量測設定
+
+實作計畫見 [measurement-remediation-plan.md](docs/measurement-remediation-plan.md)。
+
+- `output-lengths.yaml`：固定 100／500／2,000 行序列，七組設定，每組案例一次暖身、十次正式測量，共 21 次暖身與 210 次正式模型呼叫。
+- `go-engineering.yaml`：三個明確標示的合成 Go bug，共 63 次正式呼叫。外部核心／回歸測試都必須通過；這不是上游真實 repo 題庫或 HarnessBench 相容實作。
+- `warmup_repeats` 預設 0。所有暖身完成後才開始正式排程；暖身保留紀錄，但不納入統計。暖身不保證服務端快取一致。不可用 agent 仍會停止後續工作。
+- 報表新增最後完整答案、成功 terminal 與 terminal 後程序退出的接收時間，另顯示 Unicode code point 字元／秒及其中位數。這些仍是 CLI 觀測值，不是純生成速度；少於十次完成樣本會標示限制。
+- 補讀 Codex 原生 reasoning／cache-write usage。舊資料不改寫或推測補值。
+
+Go 評分需要 PATH 中的 Go 1.26+ 與 Python 3。先執行 `make check-fixtures`，確認所有壞版在核心測試失敗、修正版通過核心與回歸測試。每層只複製 `candidate.go` 到獨立暫存 module，使用可信的外部測試，不採用 agent 修改的測試或 go.mod。此流程不是主機安全沙箱。`retain_files` 只保留明確指定、位於 workspace 內的檔案；保留檔案加上 `.txt` 副檔名，避免被開發工具誤編譯；各層結果存入紀錄與報表。
+
+API 串流測速、真實 repo 案例挑選，以及 benchmark 專用設定隔離仍屬後續項目；現有 CLI profiles 的 generation／model-active TPS 繼續保持未知。

@@ -221,3 +221,24 @@ The run used macOS arm64, Go 1.26.8, Codex CLI 0.160.1, Cursor Agent 2026.10.01-
 A separate three-repeat run without Cursor workspace trust produced one `agent_unavailable` attempt followed by two `skipped` records, all ungraded. Tests also verify that ordinary stderr warnings do not fail a successful run and that an unavailable agent does not stop other agents.
 
 `make check` passed all 45 top-level tests, including race checks, formatting, vet, and build. A Linux amd64 cross-build also passed. SQLite records matched the seven run artifacts. Live runs covered the response-only case; agy tool pairing was checked with fixtures. Authenticated Claude and hosted CI were not verified in this snapshot. Local reports and raw traces remain Git-ignored.
+
+## Measurement profiles
+
+The implementation plan and scope boundaries are in [measurement-remediation-plan.md](docs/measurement-remediation-plan.md).
+
+- `benchmarks/output-lengths.yaml`: identical short (100), medium (500), and long (2,000) integer sequences across seven settings, one warmup per agent/case, ten measured repeats, serial execution. This plans 21 warmups and 210 measured model calls; review the matrix before running it.
+- `benchmarks/go-engineering.yaml`: three **synthetic** Go debugging fixtures, three measured repeats across seven settings (63 calls). They test upper-bound clamping, stable deduplication including zero, and inclusive range endpoints. They are not upstream real-repository cases or HarnessBench parity.
+
+```sh
+make check-fixtures
+./bin/agentspeedbench run -jobs 1 benchmarks/output-lengths.yaml
+./bin/agentspeedbench run -jobs 1 benchmarks/go-engineering.yaml
+```
+
+Engineering fixtures require Python 3 and Go 1.26+ on PATH. `make check` includes their quality gates: every broken version must fail core scoring, and every fixed version must pass core and regression scoring. Trusted tests remain outside the agent workspace. Each scoring layer copies only `candidate.go` into a separate temporary module with trusted test/module files and network dependency lookup disabled. Candidate tests and go.mod cannot replace the grader. This is not a host security sandbox; submitted Go code executes locally. The runner retains explicitly allowlisted candidate source under `candidate/` with a `.txt` suffix (to avoid compiling artifacts as project code) and records each layer's result. `verify.core_tests` and `verify.regression_tests` are command/argv lists; all configured checks must pass. Each command uses the verifier timeout. Existing `verify.command` still works.
+
+`warmup_repeats` defaults to zero (range 0–100). All warmup jobs finish before measured dispatch. Warmups use the same case and verification, are retained in raw artifacts and SQLite with `warmup: true`, and are excluded from aggregate statistics. Their planned/started/skipped counts are separate in the manifest. An unavailable agent discovered during warmup still stops that agent's future jobs. Warmup does not guarantee a warm server or equal cache state.
+
+New receipt metrics separate the last complete assistant/final-result receipt (`answer_complete_seconds`), successful terminal event receipt (`terminal_receipt_seconds`), and terminal-to-process-exit gap. These are runner observations, not model execution timestamps; missing terminal evidence stays null. Effective Unicode code-point characters/s uses the authoritative transcript (including whitespace) divided by process wall time. It complements vendor tokens/s but does not establish pure generation speed. Samples with fewer than ten completed measured runs are marked descriptive in reports.
+
+Codex reasoning and cache-write aliases are now parsed from native usage. Historical rows are not backfilled or rewritten. API streaming measurements, real-repository case curation, and explicit benchmark-only configuration isolation remain separate follow-up work. A streaming receive interval would itself need to be labeled as a client observation; generation/model-active TPS remain unknown in these CLI profiles.

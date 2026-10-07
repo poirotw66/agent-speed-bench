@@ -68,3 +68,19 @@ func TestFinalOnlyResultEstablishesCompleteMessageReceipt(t *testing.T) {
 		t.Fatal(m)
 	}
 }
+
+func TestCompletionReceiptAndExitGap(t *testing.T) {
+	events := []Event{{Type: "assistant_output", Text: "first", TimingBasis: "complete_message_receipt", ElapsedNS: 2e9}, {Type: "assistant_output", Text: "last", TimingBasis: "complete_message_receipt", ElapsedNS: 4e9}, {Type: "agent_completed", ElapsedNS: 5e9}}
+	m := Calculate(events, 8, nil)
+	if *m.AnswerCompleteSeconds != 4 || *m.FirstCompleteMessageSeconds != 2 || *m.TerminalReceiptSeconds != 5 || *m.TerminalToExitSeconds != 3 || m.GenerationTPS != nil {
+		t.Fatal(m)
+	}
+	m = Calculate(events[:2], 8, nil)
+	if m.TerminalToExitSeconds != nil {
+		t.Fatal(m)
+	}
+	m = Calculate(events, 4, nil)
+	if m.TerminalToExitSeconds != nil {
+		t.Fatal("negative exit interval", m)
+	}
+}

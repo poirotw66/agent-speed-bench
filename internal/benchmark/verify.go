@@ -6,7 +6,7 @@ import (
 )
 
 func (v Verify) HasChecks() bool {
-	return v.Command != "" || v.OutputContains != "" || v.OutputEquals != nil || v.IntegerSequence != nil
+	return len(v.CoreTests) > 0 || len(v.RegressionTests) > 0 || v.Command != "" || v.OutputContains != "" || v.OutputEquals != nil || v.IntegerSequence != nil
 }
 
 // CheckOutput checks all configured assertions. Exact equality preserves bytes.

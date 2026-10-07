@@ -34,6 +34,12 @@ func Calculate(events []Event, wall float64, firstStdout *float64) Metrics {
 			}
 		}
 		seconds := float64(e.ElapsedNS) / 1e9
+		if e.Type == "final_output" || e.Type == "assistant_message_receipt" || (e.Type == "assistant_output" && e.TimingBasis == "complete_message_receipt") {
+			m.AnswerCompleteSeconds = &seconds
+		}
+		if e.Type == "agent_completed" {
+			m.TerminalReceiptSeconds = &seconds
+		}
 		if e.Type == "assistant_output" || e.Type == "assistant_message_receipt" || (e.Type == "final_output" && e.Text != "") {
 			if e.TimingBasis == "text_delta_receipt" && m.FirstTextDeltaSeconds == nil {
 				m.FirstTextDeltaSeconds = &seconds
@@ -79,6 +85,10 @@ func Calculate(events []Event, wall float64, firstStdout *float64) Metrics {
 				m.Warnings = append(m.Warnings, "Unmatched or duplicate tool finish: "+e.ToolID)
 			}
 		}
+	}
+	if m.TerminalReceiptSeconds != nil && wall >= *m.TerminalReceiptSeconds {
+		gap := wall - *m.TerminalReceiptSeconds
+		m.TerminalToExitSeconds = &gap
 	}
 	m.MatchedToolCalls = len(latencies)
 	if m.MatchedToolCalls < m.ToolCalls {

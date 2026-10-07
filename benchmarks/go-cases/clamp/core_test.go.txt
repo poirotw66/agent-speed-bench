@@ -1,0 +1,11 @@
+package candidate
+
+import (
+	"testing"
+)
+
+func TestBehavior(t *testing.T) {
+	if Clamp(12, 2, 8) != 8 || Clamp(0, -8, -2) != -2 {
+		t.Fatal("upper bound incorrect")
+	}
+}

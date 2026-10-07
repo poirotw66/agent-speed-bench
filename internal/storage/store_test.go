@@ -58,3 +58,20 @@ func TestNewTelemetryRoundTrip(t *testing.T) {
 		t.Fatal(v)
 	}
 }
+
+func TestMeasurementPhaseAndScoringRoundTrip(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "runs.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	receipt, gap, characters := 2.0, 1.0, int64(6)
+	r := telemetry.Run{ID: "phase", ExperimentID: "exp", Warmup: true, Verification: []telemetry.VerificationResult{{Layer: "core", Passed: true}}, Metrics: telemetry.Metrics{AnswerCompleteSeconds: &receipt, TerminalReceiptSeconds: &receipt, TerminalToExitSeconds: &gap, OutputCharacters: &characters}}
+	if err := s.Save(r); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Runs("exp")
+	if err != nil || len(got) != 1 || !got[0].Warmup || *got[0].Metrics.TerminalToExitSeconds != 1 || *got[0].Metrics.OutputCharacters != 6 || !got[0].Verification[0].Passed {
+		t.Fatal(got, err)
+	}
+}

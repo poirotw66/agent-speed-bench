@@ -1,0 +1,16 @@
+package candidate
+
+import (
+	"testing"
+)
+
+func TestBehavior(t *testing.T) {
+	for _, x := range []int{2, 5, 8} {
+		if Clamp(x, 2, 8) != x {
+			t.Fatal("in-range changed")
+		}
+	}
+	if Clamp(-1, 2, 8) != 2 || Clamp(7, 3, 3) != 3 {
+		t.Fatal("boundary changed")
+	}
+}

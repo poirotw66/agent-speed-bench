@@ -1,0 +1,11 @@
+package candidate
+
+import (
+	"testing"
+)
+
+func TestBehavior(t *testing.T) {
+	if SumInclusive(1, 3) != 6 || SumInclusive(5, 5) != 5 {
+		t.Fatal("endpoint missing")
+	}
+}

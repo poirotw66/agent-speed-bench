@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/poirotw66/agent-speed-bench/internal/adapters"
 	"github.com/poirotw66/agent-speed-bench/internal/benchmark"
@@ -24,19 +25,22 @@ import (
 )
 
 type Manifest struct {
-	SchemaVersion  int                           `json:"schema_version"`
-	ExperimentID   string                        `json:"experiment_id"`
-	StartedAt      time.Time                     `json:"started_at"`
-	FinishedAt     time.Time                     `json:"finished_at"`
-	ElapsedSeconds float64                       `json:"elapsed_seconds"`
-	Platform       string                        `json:"platform"`
-	GoVersion      string                        `json:"go_version"`
-	Config         benchmark.Config              `json:"config"`
-	PlannedRuns    int                           `json:"planned_runs"`
-	StartedRuns    int                           `json:"started_runs"`
-	SkippedRuns    int                           `json:"skipped_runs"`
-	StoppedAgents  map[string]*telemetry.Failure `json:"stopped_agents,omitempty"`
-	Agents         []AgentInfo                   `json:"agents"`
+	WarmupStartedRuns int                           `json:"warmup_started_runs"`
+	WarmupSkippedRuns int                           `json:"warmup_skipped_runs"`
+	SchemaVersion     int                           `json:"schema_version"`
+	ExperimentID      string                        `json:"experiment_id"`
+	StartedAt         time.Time                     `json:"started_at"`
+	FinishedAt        time.Time                     `json:"finished_at"`
+	ElapsedSeconds    float64                       `json:"elapsed_seconds"`
+	Platform          string                        `json:"platform"`
+	GoVersion         string                        `json:"go_version"`
+	Config            benchmark.Config              `json:"config"`
+	WarmupRuns        int                           `json:"warmup_runs"`
+	PlannedRuns       int                           `json:"planned_runs"`
+	StartedRuns       int                           `json:"started_runs"`
+	SkippedRuns       int                           `json:"skipped_runs"`
+	StoppedAgents     map[string]*telemetry.Failure `json:"stopped_agents,omitempty"`
+	Agents            []AgentInfo                   `json:"agents"`
 }
 type AgentInfo struct {
 	Name         string                `json:"name"`
@@ -118,7 +122,7 @@ func Execute(ctx context.Context, cfg benchmark.Config, root string, store *stor
 	}
 	start := time.Now()
 	result.Directory = dir
-	result.Manifest = Manifest{SchemaVersion: 2, PlannedRuns: cfg.Repeats * len(cfg.Agents) * len(cfg.Cases), ExperimentID: experiment, StartedAt: start.UTC(), Platform: runtime.GOOS + "/" + runtime.GOARCH, GoVersion: runtime.Version(), Config: cfg, Agents: infos}
+	result.Manifest = Manifest{SchemaVersion: 2, WarmupRuns: cfg.WarmupRepeats * len(cfg.Agents) * len(cfg.Cases), PlannedRuns: cfg.Repeats * len(cfg.Agents) * len(cfg.Cases), ExperimentID: experiment, StartedAt: start.UTC(), Platform: runtime.GOOS + "/" + runtime.GOARCH, GoVersion: runtime.Version(), Config: cfg, Agents: infos}
 	if err := storage.WriteJSON(filepath.Join(dir, "manifest.json"), result.Manifest); err != nil {
 		return result, err
 	}
@@ -128,10 +132,12 @@ func Execute(ctx context.Context, cfg benchmark.Config, root string, store *stor
 		agent  benchmark.Agent
 		task   benchmark.Case
 		repeat int
+		warmup bool
 	}
 	jobs := make(chan job)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
+	var warmupWG sync.WaitGroup
 	var firstErr error
 	stopped := map[string]*telemetry.Failure{}
 	for range cfg.Jobs {
@@ -147,6 +153,10 @@ func Execute(ctx context.Context, cfg benchmark.Config, root string, store *stor
 				} else {
 					r, runErr = executeOne(ctx, j.agent, j.task, j.repeat, experiment, dir)
 				}
+				r.Warmup = j.warmup
+				if runErr == nil {
+					runErr = storage.WriteJSON(filepath.Join(r.ArtifactDir, "run.json"), r)
+				}
 				mu.Lock()
 				if r.Failure != nil && r.Failure.Scope == "agent" && !r.Failure.Retryable {
 					stopped[r.Agent] = r.Failure
@@ -160,21 +170,42 @@ func Execute(ctx context.Context, cfg benchmark.Config, root string, store *stor
 				}
 				result.Runs = append(result.Runs, r)
 				if progress != nil {
-					fmt.Fprintf(progress, "%-14s %-22s repeat=%d status=%s wall=%.3fs\n", r.Agent, r.Case, r.Repeat, r.Status, r.Metrics.WallSeconds)
+					phase := "measured"
+					if r.Warmup {
+						phase = "warmup"
+					}
+					fmt.Fprintf(progress, "%-14s %-22s phase=%s repeat=%d status=%s wall=%.3fs\n", r.Agent, r.Case, phase, r.Repeat, r.Status, r.Metrics.WallSeconds)
 				}
 				mu.Unlock()
+				if j.warmup {
+					warmupWG.Done()
+				}
 			}
 		})
 	}
 	// Rotate agent order between repeats to reduce fixed ordering bias.
 dispatch:
-	for repeat := 1; repeat <= cfg.Repeats; repeat++ {
+	for round := 1; round <= cfg.WarmupRepeats+cfg.Repeats; round++ {
+		if round == cfg.WarmupRepeats+1 {
+			warmupWG.Wait()
+		}
+		warmup := round <= cfg.WarmupRepeats
+		repeat := round
+		if !warmup {
+			repeat -= cfg.WarmupRepeats
+		}
 		for _, task := range cfg.Cases {
 			for i := range cfg.Agents {
 				a := cfg.Agents[(i+repeat-1)%len(cfg.Agents)]
+				if warmup {
+					warmupWG.Add(1)
+				}
 				select {
-				case jobs <- job{a, task, repeat}:
+				case jobs <- job{a, task, repeat, warmup}:
 				case <-ctx.Done():
+					if warmup {
+						warmupWG.Done()
+					}
 					break dispatch
 				}
 			}
@@ -185,6 +216,14 @@ dispatch:
 	sort.Slice(result.Runs, func(i, j int) bool { return result.Runs[i].ID < result.Runs[j].ID })
 	result.Manifest.StoppedAgents = stopped
 	for _, r := range result.Runs {
+		if r.Warmup {
+			if r.Status == "skipped" {
+				result.Manifest.WarmupSkippedRuns++
+			} else {
+				result.Manifest.WarmupStartedRuns++
+			}
+			continue
+		}
 		if r.Status == "skipped" {
 			result.Manifest.SkippedRuns++
 		} else {
@@ -371,32 +410,66 @@ func executeOne(parent context.Context, a benchmark.Agent, task benchmark.Case, 
 		transcript.Reset()
 		transcript.WriteString(final)
 	}
+	characters := int64(utf8.RuneCountInString(transcript.String()))
+	r.Metrics.OutputCharacters = &characters
+	if r.Metrics.WallSeconds > 0 {
+		rate := float64(characters) / r.Metrics.WallSeconds
+		r.Metrics.EffectiveCharactersPerSecond = &rate
+	}
 	if err := os.WriteFile(filepath.Join(r.ArtifactDir, "assistant.txt"), []byte(transcript.String()), 0600); err != nil {
 		return r, err
+	}
+	if retainErr := retainFiles(workspace, r.ArtifactDir, task.RetainFiles); retainErr != nil {
+		r.Status = "infrastructure_error"
+		r.Error = retainErr.Error()
+		r.Failure = &telemetry.Failure{Category: "infrastructure", Code: "artifact_capture", Scope: "attempt", Message: r.Error}
+		return r, nil
 	}
 	if !task.Verify.HasChecks() {
 		return r, nil
 	}
 	r.Error = task.Verify.CheckOutput(transcript.String())
 	pass := r.Error == ""
+	checks := append([]benchmark.Check(nil), task.Verify.CoreTests...)
+	layers := make([]string, len(checks))
+	for i := range layers {
+		layers[i] = "core"
+	}
+	for _, check := range task.Verify.RegressionTests {
+		checks = append(checks, check)
+		layers = append(layers, "regression")
+	}
 	if task.Verify.Command != "" {
-		f, err := os.OpenFile(filepath.Join(r.ArtifactDir, "verify.log"), os.O_CREATE|os.O_WRONLY, 0600)
-		if err != nil {
-			return r, err
+		checks = append(checks, benchmark.Check{Command: task.Verify.Command, Args: task.Verify.Args})
+		layers = append(layers, "command")
+	}
+	if len(checks) > 0 {
+		f, openErr := os.OpenFile(filepath.Join(r.ArtifactDir, "verify.log"), os.O_CREATE|os.O_WRONLY, 0600)
+		if openErr != nil {
+			return r, openErr
 		}
-		vctx, vcancel := context.WithTimeout(parent, time.Duration(task.Verify.TimeoutSeconds)*time.Second)
 		var locked lockedWriter
 		locked.w = f
-		graded := RunProcess(vctx, adapters.Command{Path: task.Verify.Command, Args: task.Verify.Args}, workspace, &locked, &locked)
-		vcancel()
-		if err := f.Close(); err != nil {
-			return r, err
+		for i, check := range checks {
+			fmt.Fprintf(&locked, "Scoring layer: %s\n", layers[i])
+			vctx, vcancel := context.WithTimeout(parent, time.Duration(task.Verify.TimeoutSeconds)*time.Second)
+			graded := RunProcess(vctx, adapters.Command{Path: check.Command, Args: check.Args}, workspace, &locked, &locked)
+			vcancel()
+			vr := telemetry.VerificationResult{Layer: layers[i], Command: check.Command, ExitCode: graded.ExitCode, Passed: graded.Err == nil}
+			if graded.Err != nil {
+				pass = false
+				vr.Error = graded.Err.Error()
+				if r.Error == "" {
+					r.Error = "Verifier failed (" + layers[i] + "): " + vr.Error
+				}
+			}
+			r.Verification = append(r.Verification, vr)
 		}
-		if graded.Err != nil {
-			pass = false
-			r.Error = "Verifier failed: " + graded.Err.Error()
+		if closeErr := f.Close(); closeErr != nil {
+			return r, closeErr
 		}
 	}
+
 	r.Success = &pass
 	if !pass {
 		if r.Error == "" {

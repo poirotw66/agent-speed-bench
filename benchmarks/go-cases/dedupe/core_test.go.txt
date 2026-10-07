@@ -1,0 +1,14 @@
+package candidate
+
+import (
+	"reflect"
+	"testing"
+)
+
+func TestBehavior(t *testing.T) {
+	got := Unique([]int{0, 2, 0, -1, 2})
+	want := []int{0, 2, -1}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatal(got)
+	}
+}

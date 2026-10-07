@@ -347,7 +347,7 @@ func usage(m map[string]json.RawMessage) (telemetry.Usage, error) {
 	for _, field := range []struct {
 		name string
 		dst  **int64
-	}{{"thinking_tokens", &u.ThinkingTokens}, {"cache_write_tokens", &u.CacheWriteTokens}, {"cache_read_tokens", &u.CachedTokens}, {"input_tokens", &u.InputTokens}, {"output_tokens", &u.OutputTokens}, {"cached_input_tokens", &u.CachedTokens}, {"cache_read_input_tokens", &u.CachedTokens}} {
+	}{{"reasoning_output_tokens", &u.ThinkingTokens}, {"cache_write_input_tokens", &u.CacheWriteTokens}, {"thinking_tokens", &u.ThinkingTokens}, {"cache_write_tokens", &u.CacheWriteTokens}, {"cache_read_tokens", &u.CachedTokens}, {"input_tokens", &u.InputTokens}, {"output_tokens", &u.OutputTokens}, {"cached_input_tokens", &u.CachedTokens}, {"cache_read_input_tokens", &u.CachedTokens}} {
 		raw, ok := m[field.name]
 		if !ok || string(raw) == "null" {
 			continue
@@ -355,6 +355,9 @@ func usage(m map[string]json.RawMessage) (telemetry.Usage, error) {
 		var v int64
 		if err := json.Unmarshal(raw, &v); err != nil || v < 0 {
 			return u, fmt.Errorf("invalid usage field %s", field.name)
+		}
+		if *field.dst != nil && **field.dst != v {
+			return u, fmt.Errorf("conflicting usage alias %s", field.name)
 		}
 		*field.dst = &v
 	}

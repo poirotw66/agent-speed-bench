@@ -1,0 +1,9 @@
+package candidate
+
+func SumInclusive(lo, hi int) int {
+	sum := 0
+	for x := lo; x < hi; x++ {
+		sum += x
+	}
+	return sum
+}

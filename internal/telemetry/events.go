@@ -64,6 +64,11 @@ type RawLine struct {
 }
 
 type Metrics struct {
+	AnswerCompleteSeconds          *float64 `json:"answer_complete_seconds"`
+	TerminalReceiptSeconds         *float64 `json:"terminal_receipt_seconds"`
+	TerminalToExitSeconds          *float64 `json:"terminal_to_exit_seconds"`
+	OutputCharacters               *int64   `json:"output_characters"`
+	EffectiveCharactersPerSecond   *float64 `json:"effective_characters_per_second"`
 	ReportedDurationSeconds        *float64 `json:"reported_duration_seconds"`
 	ReportedDurationSource         string   `json:"reported_duration_source,omitempty"`
 	SchemaVersion                  int      `json:"schema_version"`
@@ -91,22 +96,32 @@ type Metrics struct {
 	Warnings                       []string `json:"warnings,omitempty"`
 }
 
+type VerificationResult struct {
+	Layer    string `json:"layer"`
+	Command  string `json:"command"`
+	ExitCode *int   `json:"exit_code"`
+	Passed   bool   `json:"passed"`
+	Error    string `json:"error,omitempty"`
+}
+
 type Run struct {
-	ID           string    `json:"id"`
-	ExperimentID string    `json:"experiment_id"`
-	Case         string    `json:"case"`
-	Agent        string    `json:"agent"`
-	Adapter      string    `json:"adapter"`
-	Model        string    `json:"model,omitempty"`
-	Repeat       int       `json:"repeat"`
-	StartedAt    time.Time `json:"started_at"`
-	Status       string    `json:"status"`
-	ExitCode     *int      `json:"exit_code"`
-	Success      *bool     `json:"success"`
-	Error        string    `json:"error,omitempty"`
-	Failure      *Failure  `json:"failure,omitempty"`
-	Settings     Settings  `json:"settings"`
-	Commit       string    `json:"commit,omitempty"`
-	ArtifactDir  string    `json:"artifact_dir"`
-	Metrics      Metrics   `json:"metrics"`
+	Warmup       bool                 `json:"warmup,omitempty"`
+	Verification []VerificationResult `json:"verification,omitempty"`
+	ID           string               `json:"id"`
+	ExperimentID string               `json:"experiment_id"`
+	Case         string               `json:"case"`
+	Agent        string               `json:"agent"`
+	Adapter      string               `json:"adapter"`
+	Model        string               `json:"model,omitempty"`
+	Repeat       int                  `json:"repeat"`
+	StartedAt    time.Time            `json:"started_at"`
+	Status       string               `json:"status"`
+	ExitCode     *int                 `json:"exit_code"`
+	Success      *bool                `json:"success"`
+	Error        string               `json:"error,omitempty"`
+	Failure      *Failure             `json:"failure,omitempty"`
+	Settings     Settings             `json:"settings"`
+	Commit       string               `json:"commit,omitempty"`
+	ArtifactDir  string               `json:"artifact_dir"`
+	Metrics      Metrics              `json:"metrics"`
 }
