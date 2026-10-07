@@ -241,4 +241,22 @@ Engineering fixtures require Python 3 and Go 1.26+ on PATH. `make check` include
 
 New receipt metrics separate the last complete assistant/final-result receipt (`answer_complete_seconds`), successful terminal event receipt (`terminal_receipt_seconds`), and terminal-to-process-exit gap. These are runner observations, not model execution timestamps; missing terminal evidence stays null. Effective Unicode code-point characters/s uses the authoritative transcript (including whitespace) divided by process wall time. It complements vendor tokens/s but does not establish pure generation speed. Samples with fewer than ten completed measured runs are marked descriptive in reports.
 
-Codex reasoning and cache-write aliases are now parsed from native usage. Historical rows are not backfilled or rewritten. API streaming measurements, real-repository case curation, and explicit benchmark-only configuration isolation remain separate follow-up work. A streaming receive interval would itself need to be labeled as a client observation; generation/model-active TPS remain unknown in these CLI profiles.
+Codex reasoning and cache-write aliases are now parsed from native usage. Historical rows are not backfilled or rewritten. API streaming measurements and broader real-repository case curation remain follow-up work. A streaming receive interval would itself need to be labeled as a client observation; generation/model-active TPS remain unknown in these CLI profiles.
+
+
+## Real Go case and Codex configuration isolation
+
+`benchmarks/real-go.yaml` exercises [lazygit PR #5495](https://github.com/jesseduffield/lazygit/pull/5495), selected with reference to [HarnessBench](https://github.com/nyosegawa/harness-bench). The pinned base is `8f258a3650cef809b911df24881712bc6b5d96bd`; the upstream fix is `38dd035e289dd71ad16fb0caa34525ad03460d21`. Upstream lazygit is MIT licensed. Our independently written external tests check owner casing, exact branch matching, and different owners; regression also runs the existing upstream PR-map tests. This is one focused real bug, not a representative engineering suite.
+
+```sh
+# Requires Python 3.9+, Git, and Go 1.26+ on PATH.
+python3 scripts/prepare-lazygit.py
+./bin/agentspeedbench doctor benchmarks/real-go.yaml
+./bin/agentspeedbench run benchmarks/real-go.yaml
+```
+
+Preparation downloads the pinned repository into ignored `runs/repos/lazygit` and requires the broken base to fail the named core test, base regression to pass, and the fixed source to pass both layers. Grading reconstructs the pinned `go.mod`, `go.sum`, package tree, and vendor tree in a temporary directory, then overlays **only** `pkg/commands/git_commands/github.go` and external tests. Candidate test/module/dependency changes are ignored. Each layer is bounded, uses vendored dependencies with module lookup disabled, and leaves the submitted source in the run artifacts. This is not an OS/network sandbox or a full repository test suite.
+
+Optional `repo.fresh_history: true` removes upstream Git objects and remotes from the disposable clone and creates a single base commit. The run's `commit` remains the original upstream SHA and the manifest records the policy. The source repository remains intact. It does not remove repository instructions or prevent an agent from accessing other host files.
+
+Optional Codex-only `isolate_config: true` adds `--ignore-user-config`, `--ignore-rules`, and disables memories, plugins, apps, browser_use, and computer_use. It records `settings.config_status: user_config_ignored` rather than reporting ignored user settings as active. Authentication still uses CODEX_HOME; AGENTS.md, skills, managed policy, environment, and server cache are not claimed to be isolated. Other adapters reject this option. Both options default to false, preserving existing profiles. Use a compatible Codex CLI; older versions may reject these flags. The CLI definitions are documented in the [official command reference](https://learn.chatgpt.com/docs/developer-commands).

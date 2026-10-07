@@ -34,6 +34,21 @@ func TestDefaultsAndRelativePaths(t *testing.T) {
 		t.Fatal(c)
 	}
 }
+
+func TestIsolationRequiresCodex(t *testing.T) {
+	cfg, err := loadText(t, validConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Agents[0].IsolateConfig = true
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("unsupported isolation accepted")
+	}
+	cfg.Agents[0].Adapter = "codex"
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
 func TestConfigRejectsInvalidInput(t *testing.T) {
 	for name, tail := range map[string]string{"unknown-field": "oops: true\n", "second-document": "---\nname: another\n", "negative-jobs": "jobs: -1\n", "bad-case": "cases:\n  - name: ../bad\n    prompt: hello\n", "unsafe-seed": "cases:\n  - name: task\n    prompt: hello\n    files: {../outside: bad}\n"} {
 		t.Run(name, func(t *testing.T) {

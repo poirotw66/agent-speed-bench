@@ -23,3 +23,11 @@ make check and a Linux cross-build pass. Offline fixture gates reject every brok
 ## Validation record
 
 Implemented the five CLI/fixture steps above. A native Luna/high smoke matrix completed two warmups and two measured jobs (short response and Go clamp repair); all outputs/scoring passed. Warmups were excluded from report groups, source was retained, and native reasoning/cache-write counts were populated. The short measured run separated terminal receipt at 9.239 seconds from process exit at 12.484 seconds. This smoke run is descriptive, not a comparative speed result. Full seven-agent output/engineering matrices and API measurements have not been run for this increment.
+
+
+## Next increment: implemented scope
+
+Add opt-in Codex user-config/rules and feature isolation without changing authentication or other adapters. Preserve the exact narrower policy in manifest configuration and configuration snapshots; do not claim AGENTS.md/skills/managed-policy isolation. Add opt-in fresh Git history to disposable repo clones while retaining the upstream commit identity. Add one authentic pinned lazygit owner-casing case with independently written external tests, trusted vendored dependencies, source retention, and a base-fails/fixed-passes preparation gate. API streaming and cross-vendor host isolation remain deferred. Validate with make check, Linux cross-build, case gates, and one native smoke attempt before making performance claims.
+
+
+Validation: make check and Linux amd64 cross-build passed. The real-case gate rejected the original source's three owner-casing combinations, accepted base regression, and accepted both fixed layers. Grader invalid-layer, missing-file, and symlink inputs were rejected. One native gpt-6-luna/high attempt with configuration isolation passed both external layers in 54.778 seconds; terminal-to-exit was 1.941 seconds. Its manifest, retained source, and SQLite record matched. The agent recovered from a default Go build-cache sandbox permission error by using /tmp, so this single attempt is process validation, not a comparative speed estimate. An earlier filtered-cache clone preparation failure was retained as ungraded infrastructure_error; fresh-history preparation now fetches only the pinned commit before resetting its history. Full real-case repeats have not been run.

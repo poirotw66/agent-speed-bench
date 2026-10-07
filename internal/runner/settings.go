@@ -15,6 +15,10 @@ func snapshotSettings(a benchmark.Agent) telemetry.Settings {
 	if a.Adapter != "codex" {
 		return s
 	}
+	if a.IsolateConfig {
+		s.ConfigStatus = "user_config_ignored"
+		return s
+	}
 	home := os.Getenv("CODEX_HOME")
 	if home == "" {
 		user, err := os.UserHomeDir()

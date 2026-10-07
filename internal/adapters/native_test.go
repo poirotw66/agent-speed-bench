@@ -56,6 +56,25 @@ func TestNativeCommandOptions(t *testing.T) {
 		t.Fatal(c)
 	}
 }
+
+func TestCodexConfigIsolation(t *testing.T) {
+	for _, isolate := range []bool{false, true} {
+		p, _ := New(benchmark.Agent{Adapter: "codex", IsolateConfig: isolate})
+		c, _ := p.BuildCommand("hello", "")
+		args := strings.Join(c.Args, " ")
+		if strings.Contains(args, "--ignore-user-config --ignore-rules") != isolate {
+			t.Fatal(c)
+		}
+		for _, feature := range []string{"memories", "plugins", "apps", "browser_use", "computer_use"} {
+			if strings.Contains(args, "--disable "+feature) != isolate {
+				t.Fatal(c)
+			}
+		}
+		if c.Stdin != "hello" || c.Args[len(c.Args)-1] != "-" {
+			t.Fatal(c)
+		}
+	}
+}
 func TestAgyNativeTraceAndAuthoritativeTotals(t *testing.T) {
 	p, _ := New(benchmark.Agent{Adapter: "agy"})
 	lines := []string{

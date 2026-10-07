@@ -248,6 +248,27 @@ func TestRepoSnapshotIgnoresDirtyWorkingTree(t *testing.T) {
 	if err != nil || string(data) != "dirty" {
 		t.Fatal("source working tree changed")
 	}
+	gitTest("add", "value.txt")
+	gitTest("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--quiet", "-m", "future fix")
+	future := gitTest("rev-parse", "HEAD")
+	dest = filepath.Join(t.TempDir(), "fresh")
+	got, err = Prepare(context.Background(), benchmark.Case{Repo: &benchmark.Repo{Path: source, Commit: commit, FreshHistory: true}}, dest)
+	if err != nil || got != commit {
+		t.Fatal(got, err)
+	}
+	if count, err := git(context.Background(), dest, "rev-list", "--count", "HEAD"); err != nil || count != "1" {
+		t.Fatal(count, err)
+	}
+	if remotes, err := git(context.Background(), dest, "remote"); err != nil || remotes != "" {
+		t.Fatal(remotes, err)
+	}
+	if _, err := git(context.Background(), dest, "cat-file", "-e", future); err == nil {
+		t.Fatal("future commit leaked into fresh history")
+	}
+	data, err = os.ReadFile(filepath.Join(dest, "value.txt"))
+	if err != nil || string(data) != "committed" {
+		t.Fatal(string(data), err)
+	}
 }
 
 func TestCanceledRunRemainsARecordedFailure(t *testing.T) {
@@ -334,6 +355,10 @@ func TestSettingsSnapshotExcludesSecretsAndDistinguishesRequests(t *testing.T) {
 	}
 	s = snapshotSettings(benchmark.Agent{Adapter: "codex"})
 	if s.ConfigStatus != "invalid" || s.ConfiguredModel != nil {
+		t.Fatal(s)
+	}
+	s = snapshotSettings(benchmark.Agent{Adapter: "codex", IsolateConfig: true})
+	if s.ConfigStatus != "user_config_ignored" || s.ConfigSource != "" || s.ConfiguredModel != nil {
 		t.Fatal(s)
 	}
 }

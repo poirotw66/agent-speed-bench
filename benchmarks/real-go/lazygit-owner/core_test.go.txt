@@ -1,0 +1,24 @@
+package git_commands
+
+import (
+	"github.com/jesseduffield/lazygit/pkg/commands/models"
+	"testing"
+)
+
+func TestASBCoreOwnerCasing(t *testing.T) {
+	for _, tc := range []struct{ owner, remote string }{
+		{"JesseDuffield", "git@github.com:jesseduffield/lazygit.git"},
+		{"jesseduffield", "https://github.com/JesseDuffield/lazygit.git"},
+		{"JESSEDUFFIELD", "https://github.com/JesseDuffield/lazygit.git"},
+	} {
+		t.Run(tc.owner+tc.remote, func(t *testing.T) {
+			pr := &models.GithubPullRequest{Number: 31, HeadRefName: "feature/Case", HeadRepositoryOwner: models.GithubRepositoryOwner{Login: tc.owner}}
+			branch := &models.Branch{Name: "local", UpstreamRemote: "origin", UpstreamBranch: "feature/Case"}
+			remote := &models.Remote{Name: "origin", Urls: []string{tc.remote}}
+			got := GenerateGithubPullRequestMap([]*models.GithubPullRequest{pr}, []*models.Branch{branch}, []*models.Remote{remote})
+			if got["local"] == nil || got["local"].Number != 31 {
+				t.Fatalf("owner casing prevented PR match: %#v", got)
+			}
+		})
+	}
+}

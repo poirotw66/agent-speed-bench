@@ -114,4 +114,22 @@ cases:
 
 Go 評分需要 PATH 中的 Go 1.26+ 與 Python 3。先執行 `make check-fixtures`，確認所有壞版在核心測試失敗、修正版通過核心與回歸測試。每層只複製 `candidate.go` 到獨立暫存 module，使用可信的外部測試，不採用 agent 修改的測試或 go.mod。此流程不是主機安全沙箱。`retain_files` 只保留明確指定、位於 workspace 內的檔案；保留檔案加上 `.txt` 副檔名，避免被開發工具誤編譯；各層結果存入紀錄與報表。
 
-API 串流測速、真實 repo 案例挑選，以及 benchmark 專用設定隔離仍屬後續項目；現有 CLI profiles 的 generation／model-active TPS 繼續保持未知。
+API 串流測速與更多真實 repo 案例仍屬後續項目；現有 CLI profiles 的 generation／model-active TPS 繼續保持未知。
+
+
+## 真實 Go 案例與 Codex 設定隔離
+
+`benchmarks/real-go.yaml` 使用 [lazygit PR #5495](https://github.com/jesseduffield/lazygit/pull/5495) 的 owner 大小寫錯誤，案例選擇參考 [HarnessBench](https://github.com/nyosegawa/harness-bench)。固定原始 commit 為 `8f258a3650cef809b911df24881712bc6b5d96bd`，修正版為 `38dd035e289dd71ad16fb0caa34525ad03460d21`；上游為 MIT 授權。這是一個真實 bug，不代表完整工程能力題庫。
+
+```sh
+# PATH 需要 Python 3.9+、Git、Go 1.26+。
+python3 scripts/prepare-lazygit.py
+./bin/agentspeedbench doctor benchmarks/real-go.yaml
+./bin/agentspeedbench run benchmarks/real-go.yaml
+```
+
+準備步驟下載固定 repo 到忽略追蹤的 `runs/repos/lazygit`，確認原始版本在指定核心測試失敗、原始回歸通過、修正版兩層都通過。獨立編寫的外部測試檢查 owner 大小寫、分支名稱必須完全相同，以及不同 owner 不應配對；回歸另執行上游既有 PR-map 測試。評分每層都從原始 commit 重建可信的 module、package 與 vendor，只套用 agent 的 `pkg/commands/git_commands/github.go`，不採用 agent 修改的測試與依賴。使用 vendor 並關閉 module 查找，有時間限制並保留提交原始碼；這不是主機／網路沙箱，也不是全 repo 回歸。
+
+`repo.fresh_history: true` 只在一次性 clone 移除上游 Git 歷史與 remote，建立單一起始 commit；run 仍記錄原始上游 SHA，manifest 保存此政策。不移除 repo 指令，也不限制其他主機檔案存取。
+
+Codex 專用 `isolate_config: true` 跳過 user config 與 .rules，停用 memories、plugins、apps、browser_use、computer_use；設定快照標記 `user_config_ignored`。認證仍使用 CODEX_HOME；AGENTS.md、skills、managed policy、環境與服務端快取不宣稱已隔離。其他 adapter 不接受此選項。兩個選項預設皆為 false，既有 profiles 保持相容；舊 CLI 可能不支援這些旗標。[官方 CLI 文件](https://learn.chatgpt.com/docs/developer-commands)。

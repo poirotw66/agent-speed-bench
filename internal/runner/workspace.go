@@ -14,13 +14,43 @@ import (
 func Prepare(ctx context.Context, task benchmark.Case, dir string) (string, error) {
 	if task.Repo != nil {
 		// Resolve once in preflight, then clone an independent local object store.
-		if _, err := git(ctx, "", "clone", "--quiet", "--no-local", "--no-checkout", "--", task.Repo.Path, dir); err != nil {
-			return "", err
+		if task.Repo.FreshHistory {
+			// Fetch only the pinned tree, also supporting shallow/filtered caches
+			// without requesting unrelated historical objects from their server.
+			if _, err := git(ctx, "", "init", "--quiet", "--template=", dir); err != nil {
+				return "", err
+			}
+			if _, err := git(ctx, dir, "fetch", "--quiet", "--depth=1", "--", task.Repo.Path, task.Repo.Commit); err != nil {
+				return "", err
+			}
+		} else {
+			if _, err := git(ctx, "", "clone", "--quiet", "--no-local", "--no-checkout", "--", task.Repo.Path, dir); err != nil {
+				return "", err
+			}
 		}
 		if _, err := git(ctx, dir, "checkout", "--quiet", "--detach", task.Repo.Commit); err != nil {
 			return "", err
 		}
-		return git(ctx, dir, "rev-parse", "HEAD")
+		commit, err := git(ctx, dir, "rev-parse", "HEAD")
+		if err != nil {
+			return "", err
+		}
+		if task.Repo.FreshHistory {
+			// Remove upstream objects and remotes only from this disposable clone.
+			if err := os.RemoveAll(filepath.Join(dir, ".git")); err != nil {
+				return "", err
+			}
+			for _, args := range [][]string{
+				{"init", "--quiet", "--template="},
+				{"add", "--force", "--all"},
+				{"-c", "user.name=AgentSpeedBench", "-c", "user.email=benchmark@localhost", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "--quiet", "-m", "Benchmark base"},
+			} {
+				if _, err := git(ctx, dir, args...); err != nil {
+					return "", err
+				}
+			}
+		}
+		return commit, nil
 	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return "", err

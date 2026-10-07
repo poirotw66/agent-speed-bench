@@ -58,6 +58,12 @@ func (p *parser) BuildCommand(prompt, workdir string) (Command, error) {
 			c.Path = "codex"
 		}
 		c.Args = []string{"exec", "--json", "--ephemeral", "--sandbox", "workspace-write", "--skip-git-repo-check", "--color", "never"}
+		if p.agent.IsolateConfig {
+			c.Args = append(c.Args, "--ignore-user-config", "--ignore-rules")
+			for _, feature := range []string{"memories", "plugins", "apps", "browser_use", "computer_use"} {
+				c.Args = append(c.Args, "--disable", feature)
+			}
+		}
 		if p.agent.Model != "" {
 			c.Args = append(c.Args, "--model", p.agent.Model)
 		}

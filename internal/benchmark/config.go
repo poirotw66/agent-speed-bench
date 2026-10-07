@@ -13,6 +13,7 @@ import (
 )
 
 type Agent struct {
+	IsolateConfig   bool     `yaml:"isolate_config,omitempty" json:"isolate_config,omitempty"`
 	TrustWorkspace  bool     `yaml:"trust_workspace,omitempty" json:"trust_workspace,omitempty"`
 	ServiceTier     string   `yaml:"service_tier,omitempty" json:"service_tier,omitempty"`
 	Name            string   `yaml:"name" json:"name"`
@@ -24,8 +25,9 @@ type Agent struct {
 	VersionArgs     []string `yaml:"version_args,omitempty" json:"version_args,omitempty"`
 }
 type Repo struct {
-	Path   string `yaml:"path" json:"path"`
-	Commit string `yaml:"commit" json:"commit"`
+	FreshHistory bool   `yaml:"fresh_history,omitempty" json:"fresh_history,omitempty"`
+	Path         string `yaml:"path" json:"path"`
+	Commit       string `yaml:"commit" json:"commit"`
 }
 type Check struct {
 	Command string   `yaml:"command" json:"command"`
@@ -176,6 +178,9 @@ func (c Config) Validate() error {
 		}
 		if a.TrustWorkspace && a.Adapter != "cursor" {
 			return fmt.Errorf("agent %s: trust_workspace is only supported for cursor", a.Name)
+		}
+		if a.IsolateConfig && a.Adapter != "codex" {
+			return fmt.Errorf("agent %s: isolate_config is supported only for codex", a.Name)
 		}
 		if a.ServiceTier != "" && (a.Adapter != "codex" || (a.ServiceTier != "default" && a.ServiceTier != "fast")) {
 			return fmt.Errorf("agent %s: service_tier requires codex and default or fast", a.Name)
