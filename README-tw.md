@@ -23,12 +23,12 @@ go build -trimpath -o bin/agentspeedbench ./cmd/agentspeedbench
 ./bin/agentspeedbench report -out runs/history.html
 ```
 
-`doctor` 檢查設定、執行檔、版本及 repo commit；不會送出模型提示詞，也不驗證登入。`run` 會使用各 CLI 的帳號設定與額度。flags 必須放在 YAML 檔名之前。已在本機執行 Codex 登入實測；Claude／Cursor 尚未完成實際登入驗證。
+`doctor` 檢查設定、執行檔、版本及 repo commit；不會送出模型提示詞，也不驗證登入。`run` 會使用各 CLI 的帳號設定與額度。flags 必須放在 YAML 檔名之前。已在本機執行 Codex 登入實測；Cursor Auto 與 agy Gemini 3.8 Flash 也已完成本機實測；Claude 尚未完成實際登入驗證。
 
 ## 已實作
 
-- Codex、Claude Code、Cursor 的命令與事件 adapter。
-- 自訂命令 adapter；Antigravity 範例需要填入已核實的 headless CLI。
+- Codex、Claude Code、Cursor、agy 的命令與事件 adapter。
+- 自訂命令 adapter；Antigravity 範例直接使用原生 agy CLI。
 - 重複與並行執行，每輪輪替 agent 順序。
 - 每次使用獨立 workspace；有 repo 的案例只取指定 commit，不包含來源的未提交修改。
 - 程序群組逾時／取消清理、stdout／stderr 原始紀錄及時間戳。
@@ -49,13 +49,13 @@ go build -trimpath -o bin/agentspeedbench ./cmd/agentspeedbench
 | Pass / graded | 通過驗證的任務 ÷ 結果已知的任務；未評分保持未知。 |
 | Passed / wall hour | 依程序時間換算的序列等效通過量，不是並行實驗的實際每小時完成量。 |
 
-缺少的數值保留 JSON `null`、SQL `NULL` 及報表 `unknown`；真正回報的零值才顯示零。Cursor 官方輸出格式沒有可靠的 token usage，因此不估算 tokens。各廠商的 tokenizer 與 usage 計費定義也不一定相同。
+缺少的數值保留 JSON `null`、SQL `NULL` 及報表 `unknown`；真正回報的零值才顯示零。Cursor 會讀取原生終端結果的 camelCase usage；沒有回報時才保持未知。各廠商的 tokenizer 與 usage 計費定義也不一定相同。
 
-報表依「實驗、agent、案例、TTFA 時間基準」分組，不會把不同實驗設定混成一個平均值。要做前後比較，請固定模型、repo commit、權限、CLI 版本及並行數，並核對 `manifest.json`。目前不能僅憑這些數據判定是模型推論、網路、服務排隊或 orchestration 造成變慢。
+報表依「實驗、agent、案例、TTFA 時間基準、output token 計數定義」分組，不會把不同實驗設定混成一個平均值。要做前後比較，請固定模型、repo commit、權限、CLI 版本及並行數，並核對 `manifest.json`。目前不能僅憑這些數據判定是模型推論、網路、服務排隊或 orchestration 造成變慢。
 
 ## 設定與驗證
 
-`benchmarks/quick.yaml` 可直接用於簡單回應測試。`repo-debug.example.yaml` 與 `antigravity.example.yaml` 是需要填寫的範例，不能直接當成已驗證的 benchmark。
+`benchmarks/quick.yaml` 可直接用於簡單回應測試。`repo-debug.example.yaml` 需要填寫 repo；`antigravity.example.yaml` 使用原生 agy，仍需可用模型與登入。`native-comparison.yaml` 提供七組模型／設定的序列測試。
 
 設定中的 repo 路徑、含 `/` 的執行檔路徑，相對於 YAML 所在目錄；一般執行檔名稱從 `PATH` 尋找。Verifier 的 arguments 相對於臨時 workspace。`output_contains` 是 substring smoke check，並不證明語意或程式正確性；需要較強的評分時，配置可信的外部 verifier。
 
@@ -72,7 +72,7 @@ make check
 - 工具的 `tool_receipt_interval_*` 是 runner 接收到配對事件的間隔。它不代表工具執行耗時；沒有權威執行時間時，`tool_latency_*` 保持未知。HTML 會顯示微秒／毫秒，舊紀錄的工具間隔也會重新標示，但不改寫歷史資料。
 - TTFA 記錄 `ttfa_timing_basis`，並分別保留第一個文字 delta、完整訊息與工具動作的接收時間。報告不混合不同時間基準，Codex 完整訊息仍可能受 CLI 緩衝影響。
 - 巢狀錯誤保留原因、分類、HTTP 狀態、scope 與 retryability。不支援的模型或認證錯誤會停止該 agent 後續排程並留下 `skipped` 紀錄；其他 agent 繼續。已啟動的並行工作可能完成。`agent_unavailable`／`service_error`／`infrastructure_error`／`telemetry_error`／`skipped` 不計入任務正確率，暫時性服務錯誤不會停止重複測試。
-- Codex 可設定 `reasoning_effort: high`，透過 CLI 覆寫 `model_reasoning_effort`。每次執行分開記錄 requested、configured、observed model／effort。只擷取使用者 TOML 中允許的兩個欄位，不保存秘密；這不是完整設定層解析。CLI 未明確回報時，observed 保持未知。[設定文件](https://learn.chatgpt.com/docs/developer-settings)。
+- Codex 可設定 `reasoning_effort: high`，透過 CLI 覆寫 `model_reasoning_effort`。每次執行分開記錄 requested、configured、observed model／effort。只擷取使用者 TOML 中允許的 model、effort、service tier 與 fast_mode 欄位，不保存秘密；這不是完整設定層解析。CLI 未明確回報時，observed 保持未知。[設定文件](https://learn.chatgpt.com/docs/developer-settings)。
 - `verify.output_equals` 驗證逐位元組一致；`verify.integer_sequence` 驗證完整數字序列與結束標記。`benchmarks/quick.yaml` 已改成完整驗證，缺漏、重複、順序錯誤、額外文字或只輸出標記都不會通過。所有已設定的驗證條件必須同時通過。
 
 ```yaml
@@ -92,3 +92,12 @@ cases:
 ```
 
 序列驗證允許 LF／CRLF 與一次可選的末尾換行。設定快照只讀取 `$CODEX_HOME/config.toml` 或 `~/.codex/config.toml`，不解析 project、managed 或 profile 設定。舊紀錄缺乏結構化錯誤時，原本的失敗評分無法自動還原。
+
+## Cursor、agy 與 Fast 修正
+
+- Cursor 讀取 input／output／cache-read／cache-write tokens，保留缺值與零值的差別。`trust_workspace` 預設關閉；明確設為 `true` 才加入 `--trust`。stderr 的 workspace trust 錯誤只有在程序非零退出時才視為不可用，後續排程跳過且不評分；一般警告不影響成功結果。
+- agy 直接使用原生 `stream-json`，解析 metadata、文字 delta、工具配對與最終結果；只有 terminal `SUCCESS` 才可完成。最終 response 用於驗證，最終 usage 覆蓋總量，避免重複計數。
+- Thinking tokens 與 cache-write tokens 分開保存。agy 的 output tokens 包含 thinking；報表明確顯示計數定義。CLI 回報的 duration 與程序 wall time 分開，不能當成純生成區間或可見文字速度。
+- Codex 的 `service_tier: fast` 會加入 tier override 與 `--enable fast_mode`；requested、configured、observed 分開記錄。成功請求不證明實際 Fast tier，也不保證 1.5 倍。CLI 未回報時 observed 保持未知。[Fast 設定文件](https://learn.chatgpt.com/docs/agent-configuration/speed?site_variant=chatgpt)。
+
+歷史 run 不改寫；新欄位需重新測試才能取得。七組完整設定見 `benchmarks/native-comparison.yaml`，其中 Cursor 明確信任測試 workspace；使用 repo 或 seed files 前請核對此設定。

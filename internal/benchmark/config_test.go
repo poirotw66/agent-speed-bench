@@ -73,3 +73,21 @@ func TestReasoningEffortAndSequenceValidation(t *testing.T) {
 		t.Fatal(cfg, err)
 	}
 }
+
+func TestNativeOptionsAndExamples(t *testing.T) {
+	for _, agent := range []string{"adapter: cursor\n   trust_workspace: true", "adapter: codex\n   service_tier: fast", "adapter: agy\n   reasoning_effort: medium"} {
+		if _, err := loadText(t, "name: native\nagents:\n - name: a\n   "+agent+"\ncases:\n - name: task\n   prompt: hi\n"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, agent := range []string{"adapter: codex\n   trust_workspace: true", "adapter: cursor\n   service_tier: fast", "adapter: codex\n   service_tier: turbo", "adapter: agy\n   reasoning_effort: minimal"} {
+		if _, err := loadText(t, "name: native\nagents:\n - name: a\n   "+agent+"\ncases:\n - name: task\n   prompt: hi\n"); err == nil {
+			t.Fatal(agent)
+		}
+	}
+	for _, path := range []string{"../../benchmarks/antigravity.example.yaml", "../../benchmarks/native-comparison.yaml"} {
+		if _, err := Load(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

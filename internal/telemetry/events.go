@@ -4,25 +4,31 @@ import "time"
 
 // Usage preserves missing fields rather than interpreting them as zero.
 type Usage struct {
-	InputTokens  *int64 `json:"input_tokens"`
-	OutputTokens *int64 `json:"output_tokens"`
-	CachedTokens *int64 `json:"cached_input_tokens"`
+	ThinkingTokens        *int64 `json:"thinking_tokens"`
+	CacheWriteTokens      *int64 `json:"cache_write_tokens"`
+	OutputTokenAccounting string `json:"output_token_accounting,omitempty"`
+	InputTokens           *int64 `json:"input_tokens"`
+	OutputTokens          *int64 `json:"output_tokens"`
+	CachedTokens          *int64 `json:"cached_input_tokens"`
 }
 
 type Event struct {
-	RunID           string   `json:"run_id,omitempty"`
-	Agent           string   `json:"agent,omitempty"`
-	TimestampNS     int64    `json:"timestamp_ns"`
-	ElapsedNS       int64    `json:"elapsed_ns"`
-	Type            string   `json:"type"`
-	Text            string   `json:"text,omitempty"`
-	ToolID          string   `json:"tool_id,omitempty"`
-	ToolName        string   `json:"tool_name,omitempty"`
-	Usage           *Usage   `json:"usage,omitempty"`
-	TimingBasis     string   `json:"timing_basis,omitempty"`
-	Failure         *Failure `json:"failure,omitempty"`
-	Model           string   `json:"model,omitempty"`
-	ReasoningEffort string   `json:"reasoning_effort,omitempty"`
+	ServiceTier             string   `json:"service_tier,omitempty"`
+	ReportedDurationSeconds *float64 `json:"reported_duration_seconds,omitempty"`
+	ReportedDurationSource  string   `json:"reported_duration_source,omitempty"`
+	RunID                   string   `json:"run_id,omitempty"`
+	Agent                   string   `json:"agent,omitempty"`
+	TimestampNS             int64    `json:"timestamp_ns"`
+	ElapsedNS               int64    `json:"elapsed_ns"`
+	Type                    string   `json:"type"`
+	Text                    string   `json:"text,omitempty"`
+	ToolID                  string   `json:"tool_id,omitempty"`
+	ToolName                string   `json:"tool_name,omitempty"`
+	Usage                   *Usage   `json:"usage,omitempty"`
+	TimingBasis             string   `json:"timing_basis,omitempty"`
+	Failure                 *Failure `json:"failure,omitempty"`
+	Model                   string   `json:"model,omitempty"`
+	ReasoningEffort         string   `json:"reasoning_effort,omitempty"`
 }
 
 // Failure separates availability and infrastructure from task correctness.
@@ -36,6 +42,10 @@ type Failure struct {
 }
 
 type Settings struct {
+	RequestedServiceTier      string  `json:"requested_service_tier,omitempty"`
+	ConfiguredServiceTier     *string `json:"configured_service_tier"`
+	ObservedServiceTier       *string `json:"observed_service_tier"`
+	ConfiguredFastMode        *bool   `json:"configured_fast_mode"`
 	RequestedModel            string  `json:"requested_model,omitempty"`
 	ConfiguredModel           *string `json:"configured_model"`
 	ObservedModel             *string `json:"observed_model"`
@@ -54,6 +64,8 @@ type RawLine struct {
 }
 
 type Metrics struct {
+	ReportedDurationSeconds        *float64 `json:"reported_duration_seconds"`
+	ReportedDurationSource         string   `json:"reported_duration_source,omitempty"`
 	SchemaVersion                  int      `json:"schema_version"`
 	WallSeconds                    float64  `json:"wall_seconds"`
 	FirstStdoutSeconds             *float64 `json:"first_stdout_line_seconds"`

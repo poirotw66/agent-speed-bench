@@ -45,12 +45,18 @@ func Calculate(events []Event, wall float64, firstStdout *float64) Metrics {
 		if e.Type == "tool_started" && m.FirstToolActionSeconds == nil {
 			m.FirstToolActionSeconds = &seconds
 		}
+		if e.ReportedDurationSeconds != nil {
+			m.ReportedDurationSeconds = e.ReportedDurationSeconds
+			m.ReportedDurationSource = e.ReportedDurationSource
+		}
 		switch e.Type {
 		case "usage_reported":
 			if e.Usage != nil {
 				add(&m.Usage.InputTokens, e.Usage.InputTokens)
 				add(&m.Usage.OutputTokens, e.Usage.OutputTokens)
 				add(&m.Usage.CachedTokens, e.Usage.CachedTokens)
+				add(&m.Usage.ThinkingTokens, e.Usage.ThinkingTokens)
+				add(&m.Usage.CacheWriteTokens, e.Usage.CacheWriteTokens)
 			}
 		case "usage_total":
 			if e.Usage != nil {

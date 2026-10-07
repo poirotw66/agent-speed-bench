@@ -362,3 +362,76 @@ func TestTransientFailuresDoNotStopRemainingRepeats(t *testing.T) {
 		}
 	}
 }
+
+func TestCursorTrustDiagnosticStopsOnlyBlockedAgent(t *testing.T) {
+	dir := t.TempDir()
+	store, err := storage.Open(filepath.Join(dir, "runs.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	path := filepath.Join(dir, "cursor-fixture")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then echo fixture; exit 0; fi\nprintf '⚠ Workspace Trust Required\\n' >&2\nexit 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := benchmark.Config{Name: "trust", Repeats: 3, Jobs: 1, TimeoutSeconds: 2, Cases: []benchmark.Case{fixtureTask()}, Agents: []benchmark.Agent{{Name: "blocked", Adapter: "cursor", Command: path}, {Name: "healthy", Adapter: "generic", Command: "sh", Args: []string{"-c", "printf Done"}}}}
+	result, err := Execute(context.Background(), cfg, dir, store, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unavailable, skipped, healthy := 0, 0, 0
+	for _, r := range result.Runs {
+		switch r.Status {
+		case "agent_unavailable":
+			unavailable++
+			if r.Success != nil || r.Failure.Code != "workspace_trust_required" || r.Failure.Retryable {
+				t.Fatal(r)
+			}
+		case "skipped":
+			skipped++
+		case "completed":
+			healthy++
+		default:
+			t.Fatal(r)
+		}
+	}
+	if unavailable != 1 || skipped != 2 || healthy != 3 {
+		t.Fatal(result)
+	}
+	// A diagnostic-looking warning cannot turn a successful exit into a failure.
+	script := "#!/bin/sh\nprintf '⚠ Workspace Trust Required\\n' >&2\nprintf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"Done\"}'\n"
+	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	r, err := executeOne(context.Background(), cfg.Agents[0], fixtureTask(), 1, "warning", dir)
+	if err != nil || r.Status != "completed" || r.Failure != nil {
+		t.Fatal(r, err)
+	}
+}
+func TestServiceTierSnapshotExcludesSecretsAndDoesNotInferObserved(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte("service_tier='default'\nsecret='SECRET_CANARY'\n[features]\nfast_mode=false\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s := snapshotSettings(benchmark.Agent{Adapter: "codex", ServiceTier: "fast"})
+	data, _ := json.Marshal(s)
+	if s.RequestedServiceTier != "fast" || s.ConfiguredServiceTier == nil || *s.ConfiguredServiceTier != "default" || s.ConfiguredFastMode == nil || *s.ConfiguredFastMode || s.ObservedServiceTier != nil || strings.Contains(string(data), "SECRET_CANARY") {
+		t.Fatal(s)
+	}
+}
+func TestAgyEmptyAuthoritativeTranscriptOverridesDeltas(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agy-fixture")
+	script := `#!/bin/sh
+printf '%s\n' '{"event":"step_update","step_update":{"step_type":"agent_response","state":"ACTIVE","text_delta":"Done"}}' '{"event":"result","result":{"status":"SUCCESS","response":""}}'
+`
+	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	task := fixtureTask()
+	task.Verify.OutputContains = "Done"
+	r, err := executeOne(context.Background(), benchmark.Agent{Name: "agy", Adapter: "agy", Command: path}, task, 1, "empty", t.TempDir())
+	if err != nil || r.Status != "completed" || r.Success == nil || *r.Success {
+		t.Fatal(r, err)
+	}
+}

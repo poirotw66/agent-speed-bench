@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -40,6 +41,8 @@ type parser struct {
 
 func New(a benchmark.Agent) (Adapter, error) {
 	switch a.Adapter {
+	case "agy":
+		return &agyParser{agent: a}, nil
 	case "codex", "claude", "cursor", "generic", "demo":
 		return &parser{agent: a}, nil
 	default:
@@ -61,6 +64,12 @@ func (p *parser) BuildCommand(prompt, workdir string) (Command, error) {
 		if p.agent.ReasoningEffort != "" {
 			c.Args = append(c.Args, "--config", "model_reasoning_effort="+strconv.Quote(p.agent.ReasoningEffort))
 		}
+		if p.agent.ServiceTier != "" {
+			c.Args = append(c.Args, "--config", "service_tier="+strconv.Quote(p.agent.ServiceTier))
+			if p.agent.ServiceTier == "fast" {
+				c.Args = append(c.Args, "--enable", "fast_mode")
+			}
+		}
 		c.Args = append(c.Args, "-")
 		c.Stdin = prompt
 	case "claude":
@@ -79,6 +88,9 @@ func (p *parser) BuildCommand(prompt, workdir string) (Command, error) {
 		c.Args = []string{"--print", "--output-format", "stream-json", "--stream-partial-output"}
 		if p.agent.Model != "" {
 			c.Args = append(c.Args, "--model", p.agent.Model)
+		}
+		if p.agent.TrustWorkspace {
+			c.Args = append(c.Args, "--trust")
 		}
 		c.Args = append(c.Args, "--", prompt)
 	case "demo":
@@ -107,7 +119,7 @@ func (p *parser) Capabilities() Capabilities {
 	case "claude":
 		return Capabilities{StructuredOutput: true, TokenUsage: true, ToolIntervals: true, Notes: "Partial text deltas; tool_use to tool_result receipt gaps do not establish runtime. Final result usage is authoritative."}
 	case "cursor":
-		return Capabilities{StructuredOutput: true, ToolIntervals: true, Notes: "Partial text deltas with duplicate flush filtering. Documented output has no token usage."}
+		return Capabilities{StructuredOutput: true, TokenUsage: true, ToolIntervals: true, Notes: "Partial text deltas with duplicate flush filtering; final result usage is authoritative when supplied."}
 	case "demo":
 		return Capabilities{StructuredOutput: true, TokenUsage: true, ToolIntervals: true, Notes: "Synthetic events and tokens; never compare demo results with real agents."}
 	default:
@@ -119,14 +131,16 @@ func (p *parser) TerminalSeen() bool     { return p.terminal }
 
 // These structs intentionally ignore unknown fields for forward compatibility.
 type wire struct {
-	Model   string                     `json:"model"`
-	Type    string                     `json:"type"`
-	Subtype string                     `json:"subtype"`
-	IsError bool                       `json:"is_error"`
-	Message json.RawMessage            `json:"message"`
-	Result  string                     `json:"result"`
-	Usage   map[string]json.RawMessage `json:"usage"`
-	Item    struct {
+	DurationMS  *float64                   `json:"duration_ms"`
+	ServiceTier string                     `json:"service_tier"`
+	Model       string                     `json:"model"`
+	Type        string                     `json:"type"`
+	Subtype     string                     `json:"subtype"`
+	IsError     bool                       `json:"is_error"`
+	Message     json.RawMessage            `json:"message"`
+	Result      string                     `json:"result"`
+	Usage       map[string]json.RawMessage `json:"usage"`
+	Item        struct {
 		ID      string `json:"id"`
 		Type    string `json:"type"`
 		Text    string `json:"text"`
@@ -164,8 +178,11 @@ func (p *parser) ParseEvent(line []byte) ([]telemetry.Event, error) {
 		}
 		switch e.Type {
 		case "assistant_output", "tool_started", "tool_finished", "usage_reported", "usage_total", "agent_ready", "agent_metadata", "assistant_message_receipt":
+			if d := e.ReportedDurationSeconds; d != nil && (*d < 0 || math.IsNaN(*d) || math.IsInf(*d, 0)) {
+				return nil, fmt.Errorf("invalid reported duration")
+			}
 			if e.Usage != nil {
-				for _, v := range []*int64{e.Usage.InputTokens, e.Usage.OutputTokens, e.Usage.CachedTokens} {
+				for _, v := range []*int64{e.Usage.InputTokens, e.Usage.OutputTokens, e.Usage.CachedTokens, e.Usage.ThinkingTokens, e.Usage.CacheWriteTokens} {
 					if v != nil && *v < 0 {
 						return nil, fmt.Errorf("negative usage")
 					}
@@ -197,6 +214,9 @@ func (p *parser) ParseEvent(line []byte) ([]telemetry.Event, error) {
 		return []telemetry.Event{{Type: "agent_error", Text: f.Message, Failure: f}}, nil
 	}
 	var events []telemetry.Event
+	if w.ServiceTier != "" {
+		events = append(events, telemetry.Event{Type: "agent_metadata", ServiceTier: w.ServiceTier})
+	}
 	if w.Model != "" {
 		events = append(events, telemetry.Event{Type: "agent_metadata", Model: w.Model})
 	}
@@ -291,12 +311,26 @@ func (p *parser) ParseEvent(line []byte) ([]telemetry.Event, error) {
 			}
 		case "result":
 			if w.Subtype != "success" {
-				return []telemetry.Event{{Type: "agent_error", Text: "Non-success terminal result"}}, nil
+				f := ClassifyFailure(line)
+				if w.Result != "" {
+					f = ClassifyFailure([]byte(w.Result))
+				}
+				return []telemetry.Event{{Type: "agent_error", Text: f.Message, Failure: f}}, nil
+			}
+			if w.DurationMS != nil && *w.DurationMS < 0 {
+				return nil, fmt.Errorf("invalid duration_ms")
 			}
 			p.terminal = true
 			// Final result text is an authoritative transcript for grading, not a new delta.
 			events = append(events, telemetry.Event{Type: "final_output", Text: w.Result}, telemetry.Event{Type: "agent_completed"})
-			if p.agent.Adapter == "claude" {
+			if w.DurationMS != nil {
+				seconds := *w.DurationMS / 1000
+				events = append(events, telemetry.Event{Type: "agent_duration_reported", ReportedDurationSeconds: &seconds, ReportedDurationSource: p.agent.Adapter + ".result.duration_ms"})
+			}
+			if w.Usage != nil {
+				if p.agent.Adapter == "cursor" {
+					w.Usage = cursorUsage(w.Usage)
+				}
 				u, err := usage(w.Usage)
 				if err != nil {
 					return nil, err
@@ -313,7 +347,7 @@ func usage(m map[string]json.RawMessage) (telemetry.Usage, error) {
 	for _, field := range []struct {
 		name string
 		dst  **int64
-	}{{"input_tokens", &u.InputTokens}, {"output_tokens", &u.OutputTokens}, {"cached_input_tokens", &u.CachedTokens}, {"cache_read_input_tokens", &u.CachedTokens}} {
+	}{{"thinking_tokens", &u.ThinkingTokens}, {"cache_write_tokens", &u.CacheWriteTokens}, {"cache_read_tokens", &u.CachedTokens}, {"input_tokens", &u.InputTokens}, {"output_tokens", &u.OutputTokens}, {"cached_input_tokens", &u.CachedTokens}, {"cache_read_input_tokens", &u.CachedTokens}} {
 		raw, ok := m[field.name]
 		if !ok || string(raw) == "null" {
 			continue
@@ -325,4 +359,27 @@ func usage(m map[string]json.RawMessage) (telemetry.Usage, error) {
 		*field.dst = &v
 	}
 	return u, nil
+}
+
+// Cursor uses camelCase names in its authoritative terminal usage object.
+func cursorUsage(m map[string]json.RawMessage) map[string]json.RawMessage {
+	n := make(map[string]json.RawMessage, len(m))
+	for k, v := range m {
+		n[k] = v
+	}
+	for from, to := range map[string]string{"inputTokens": "input_tokens", "outputTokens": "output_tokens", "cacheReadTokens": "cached_input_tokens", "cacheWriteTokens": "cache_write_tokens"} {
+		if v, ok := m[from]; ok {
+			n[to] = v
+		}
+	}
+	return n
+}
+
+// DiagnosticFailure recognizes an actionable stderr blocker, not arbitrary warnings.
+func DiagnosticFailure(a Adapter, line []byte) *telemetry.Failure {
+	p, ok := a.(*parser)
+	if ok && p.agent.Adapter == "cursor" && strings.TrimSpace(string(line)) == "⚠ Workspace Trust Required" {
+		return &telemetry.Failure{Category: "permission", Code: "workspace_trust_required", Scope: "agent", Retryable: false, Message: "Cursor workspace trust is required; enable trust_workspace only for an authorized benchmark workspace"}
+	}
+	return nil
 }

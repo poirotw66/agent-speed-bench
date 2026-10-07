@@ -37,3 +37,24 @@ func TestStoreRoundTripPreservesUnknownAndFilters(t *testing.T) {
 		t.Fatal("unknown fields must be SQL NULL", success, token)
 	}
 }
+
+func TestNewTelemetryRoundTrip(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "runs.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	thinking, cache, duration, tier := int64(214), int64(0), 5.990406, "fast"
+	r := telemetry.Run{ID: "new", ExperimentID: "exp", StartedAt: time.Now().UTC(), Settings: telemetry.Settings{RequestedServiceTier: "fast", ConfiguredServiceTier: &tier}, Metrics: telemetry.Metrics{Usage: telemetry.Usage{ThinkingTokens: &thinking, CacheWriteTokens: &cache, OutputTokenAccounting: "includes_thinking"}, ReportedDurationSeconds: &duration, ReportedDurationSource: "agy.result.duration_seconds"}}
+	if err := s.Save(r); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Runs("exp")
+	if err != nil || len(got) != 1 {
+		t.Fatal(got, err)
+	}
+	v := got[0]
+	if *v.Metrics.Usage.ThinkingTokens != 214 || *v.Metrics.Usage.CacheWriteTokens != 0 || *v.Metrics.ReportedDurationSeconds != duration || v.Settings.RequestedServiceTier != "fast" || v.Settings.ObservedServiceTier != nil {
+		t.Fatal(v)
+	}
+}

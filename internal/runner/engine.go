@@ -312,6 +312,9 @@ func executeOne(parent context.Context, a benchmark.Agent, task benchmark.Case, 
 	if p.Err != nil {
 		r.Error = p.Err.Error()
 	}
+	if c.failure == nil && p.ExitCode != nil && *p.ExitCode != 0 {
+		c.failure = c.diagnosticFailure
+	}
 	r.Failure = c.failure
 	if r.Failure != nil {
 		r.Error = r.Failure.Message
@@ -322,6 +325,10 @@ func executeOne(parent context.Context, a benchmark.Agent, task benchmark.Case, 
 		}
 	}
 	for _, event := range c.events {
+		if event.ServiceTier != "" {
+			value := event.ServiceTier
+			r.Settings.ObservedServiceTier = &value
+		}
 		if event.Model != "" {
 			value := event.Model
 			r.Settings.ObservedModel = &value
@@ -350,15 +357,17 @@ func executeOne(parent context.Context, a benchmark.Agent, task benchmark.Case, 
 	}
 	var transcript strings.Builder
 	final := ""
+	finalSeen := false
 	for _, e := range c.events {
 		if e.Type == "assistant_output" {
 			transcript.WriteString(e.Text)
 		}
 		if e.Type == "final_output" {
 			final = e.Text
+			finalSeen = true
 		}
 	}
-	if final != "" {
+	if finalSeen {
 		transcript.Reset()
 		transcript.WriteString(final)
 	}

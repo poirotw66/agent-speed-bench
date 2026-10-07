@@ -15,18 +15,19 @@ import (
 const maxLineBytes = 8 * 1024 * 1024
 
 type collector struct {
-	mu              sync.Mutex
-	start           time.Time
-	runID, agent    string
-	parser          adapters.Adapter
-	raw, normalized *json.Encoder
-	events          []telemetry.Event
-	firstStdout     *float64
-	parseErrors     int
-	failed          bool
-	failure         *telemetry.Failure
-	err             error
-	cancel          func()
+	mu                sync.Mutex
+	start             time.Time
+	runID, agent      string
+	parser            adapters.Adapter
+	raw, normalized   *json.Encoder
+	events            []telemetry.Event
+	firstStdout       *float64
+	parseErrors       int
+	failed            bool
+	diagnosticFailure *telemetry.Failure
+	failure           *telemetry.Failure
+	err               error
+	cancel            func()
 }
 type lineWriter struct {
 	collector *collector
@@ -99,6 +100,12 @@ func (c *collector) line(stream string, line []byte) error {
 	elapsed := now.Sub(c.start).Nanoseconds()
 	if err := c.raw.Encode(telemetry.RawLine{TimestampNS: now.UnixNano(), ElapsedNS: elapsed, Stream: stream, Line: string(line)}); err != nil {
 		return err
+	}
+	if stream == "stderr" {
+		if f := adapters.DiagnosticFailure(c.parser, line); f != nil {
+			c.diagnosticFailure = f
+		}
+		return nil
 	}
 	if stream != "stdout" || len(bytes.TrimSpace(line)) == 0 {
 		return nil

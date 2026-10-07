@@ -13,6 +13,8 @@ import (
 )
 
 type Agent struct {
+	TrustWorkspace  bool     `yaml:"trust_workspace,omitempty" json:"trust_workspace,omitempty"`
+	ServiceTier     string   `yaml:"service_tier,omitempty" json:"service_tier,omitempty"`
 	Name            string   `yaml:"name" json:"name"`
 	Adapter         string   `yaml:"adapter" json:"adapter"`
 	Model           string   `yaml:"model,omitempty" json:"model,omitempty"`
@@ -143,7 +145,7 @@ func (c Config) Validate() error {
 		}
 		seen[a.Name] = true
 		switch a.Adapter {
-		case "codex", "claude", "cursor", "demo", "generic":
+		case "codex", "claude", "cursor", "agy", "demo", "generic":
 		default:
 			return fmt.Errorf("unknown adapter %q; use generic for custom CLIs", a.Adapter)
 		}
@@ -153,9 +155,18 @@ func (c Config) Validate() error {
 		if a.Adapter != "generic" && len(a.Args) > 0 {
 			return fmt.Errorf("agent %s: args are only allowed for generic adapters", a.Name)
 		}
+		if a.TrustWorkspace && a.Adapter != "cursor" {
+			return fmt.Errorf("agent %s: trust_workspace is only supported for cursor", a.Name)
+		}
+		if a.ServiceTier != "" && (a.Adapter != "codex" || (a.ServiceTier != "default" && a.ServiceTier != "fast")) {
+			return fmt.Errorf("agent %s: service_tier requires codex and default or fast", a.Name)
+		}
+		if a.Adapter == "agy" && a.ReasoningEffort == "minimal" {
+			return fmt.Errorf("agent %s: agy does not support minimal effort", a.Name)
+		}
 		if a.ReasoningEffort != "" {
-			if a.Adapter != "codex" {
-				return fmt.Errorf("agent %s: reasoning_effort is currently supported only for codex", a.Name)
+			if a.Adapter != "codex" && a.Adapter != "agy" {
+				return fmt.Errorf("agent %s: reasoning_effort is supported only for codex and agy", a.Name)
 			}
 			switch a.ReasoningEffort {
 			case "minimal", "low", "medium", "high", "xhigh", "max":

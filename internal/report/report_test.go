@@ -63,3 +63,27 @@ func TestTimingBasesStaySeparateAndLegacyLatencyIsRelabeled(t *testing.T) {
 		t.Fatal(out.String())
 	}
 }
+
+func TestThinkingDurationAndTierRemainDistinct(t *testing.T) {
+	thinking, duration, tier := int64(214), 5.99, "fast"
+	r := telemetry.Run{ID: "native", Settings: telemetry.Settings{RequestedServiceTier: tier}, Metrics: telemetry.Metrics{SchemaVersion: 2, WallSeconds: 13, Usage: telemetry.Usage{ThinkingTokens: &thinking, OutputTokenAccounting: "includes_thinking"}, ReportedDurationSeconds: &duration, ReportedDurationSource: "agy.result.duration_seconds"}}
+	var out bytes.Buffer
+	if err := HTML(&out, []telemetry.Run{r}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Thinking: 214", "5.990 s", "agy.result.duration_seconds", "includes_thinking", "Service tier requested: fast; configured: unknown; observed: unknown"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatal("missing", want)
+		}
+	}
+	out.Reset()
+	Text(&out, []telemetry.Run{r})
+	if !strings.Contains(out.String(), "thinking=214") || !strings.Contains(out.String(), "observed=unknown") {
+		t.Fatal(out.String())
+	}
+	other := r
+	other.Metrics.Usage.OutputTokenAccounting = ""
+	if len(Aggregate([]telemetry.Run{r, other})) != 2 {
+		t.Fatal("accounting bases pooled")
+	}
+}
