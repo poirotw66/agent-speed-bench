@@ -43,7 +43,7 @@ cases:
       go.mod: "module candidate\n\ngo 1.26.0\n"
       candidate.go: |
         package candidate
-        
+
         func Clamp(x, lo, hi int) int { if x < lo { return lo }; if x > hi { return lo }; return x }
     verify:
       timeout_seconds: 60
@@ -60,7 +60,7 @@ cases:
       go.mod: "module candidate\n\ngo 1.26.0\n"
       candidate.go: |
         package candidate
-        
+
         func Unique(xs []int) []int { seen:=map[int]bool{}; out:=[]int{}; for _,x:=range xs { if x == 0 {continue}; if !seen[x] {seen[x]=true;out=append(out,x)} }; return out }
     verify:
       timeout_seconds: 60
@@ -77,7 +77,7 @@ cases:
       go.mod: "module candidate\n\ngo 1.26.0\n"
       candidate.go: |
         package candidate
-        
+
         func SumInclusive(lo, hi int) int { sum:=0; for x:=lo;x<hi;x++ {sum+=x}; return sum }
     verify:
       timeout_seconds: 60
