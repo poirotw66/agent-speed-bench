@@ -45,3 +45,21 @@ func TestHistoryKeepsExperimentsSeparate(t *testing.T) {
 		t.Fatal("incompatible experiments were pooled", groups)
 	}
 }
+
+func TestTimingBasesStaySeparateAndLegacyLatencyIsRelabeled(t *testing.T) {
+	delta, complete, interval := 1.0, 2.0, .000053542
+	runs := []telemetry.Run{
+		{Agent: "a", Case: "x", Status: "completed", Metrics: telemetry.Metrics{SchemaVersion: 2, TTFASeconds: &delta, TTFABasis: "text_delta_receipt"}},
+		{Agent: "a", Case: "x", Status: "completed", Metrics: telemetry.Metrics{SchemaVersion: 2, TTFASeconds: &complete, TTFABasis: "complete_message_receipt"}},
+	}
+	if len(Aggregate(runs)) != 2 {
+		t.Fatal("mixed TTFA bases were pooled")
+	}
+	var out bytes.Buffer
+	if err := HTML(&out, []telemetry.Run{{Metrics: telemetry.Metrics{ToolLatencyMeanSeconds: &interval}}}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "53.542 us") || !strings.Contains(out.String(), "legacy_unspecified") {
+		t.Fatal(out.String())
+	}
+}

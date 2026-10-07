@@ -17,14 +17,33 @@ func Percentile(values []float64, p float64) *float64 {
 }
 
 func Calculate(events []Event, wall float64, firstStdout *float64) Metrics {
-	m := Metrics{WallSeconds: wall, FirstStdoutSeconds: firstStdout}
+	m := Metrics{SchemaVersion: 2, TTFABasis: "unobserved", WallSeconds: wall, FirstStdoutSeconds: firstStdout, ToolTimingBasis: "runner_receipt", ToolTimingConfidence: "unverified"}
 	starts := map[string]int64{}
 	finished := map[string]bool{}
 	var latencies []float64
 	for _, e := range events {
-		if m.TTFASeconds == nil && (e.Type == "assistant_output" || e.Type == "tool_started") {
+		if m.TTFASeconds == nil && (e.Type == "assistant_output" || e.Type == "tool_started" || e.Type == "assistant_message_receipt" || (e.Type == "final_output" && e.Text != "")) {
 			s := float64(e.ElapsedNS) / 1e9
 			m.TTFASeconds = &s
+			m.TTFABasis = e.TimingBasis
+			if m.TTFABasis == "" {
+				m.TTFABasis = "stdout_line_receipt"
+				if e.Type == "final_output" {
+					m.TTFABasis = "complete_message_receipt"
+				}
+			}
+		}
+		seconds := float64(e.ElapsedNS) / 1e9
+		if e.Type == "assistant_output" || e.Type == "assistant_message_receipt" || (e.Type == "final_output" && e.Text != "") {
+			if e.TimingBasis == "text_delta_receipt" && m.FirstTextDeltaSeconds == nil {
+				m.FirstTextDeltaSeconds = &seconds
+			}
+			if (e.TimingBasis == "complete_message_receipt" || e.Type == "final_output") && m.FirstCompleteMessageSeconds == nil {
+				m.FirstCompleteMessageSeconds = &seconds
+			}
+		}
+		if e.Type == "tool_started" && m.FirstToolActionSeconds == nil {
+			m.FirstToolActionSeconds = &seconds
 		}
 		switch e.Type {
 		case "usage_reported":
@@ -65,9 +84,10 @@ func Calculate(events []Event, wall float64, firstStdout *float64) Metrics {
 			total += v
 		}
 		mean := total / float64(len(latencies))
-		m.ToolLatencyMeanSeconds = &mean
-		m.ToolLatencyP50Seconds = Percentile(latencies, .5)
-		m.ToolLatencyP95Seconds = Percentile(latencies, .95)
+		m.ToolReceiptIntervalMeanSeconds = &mean
+		m.Warnings = append(m.Warnings, "Tool receipt intervals do not establish actual execution duration")
+		m.ToolReceiptIntervalP50Seconds = Percentile(latencies, .5)
+		m.ToolReceiptIntervalP95Seconds = Percentile(latencies, .95)
 	}
 	if m.Usage.OutputTokens != nil && wall > 0 {
 		rate := float64(*m.Usage.OutputTokens) / wall
@@ -88,4 +108,20 @@ func add(dst **int64, src *int64) {
 	} else {
 		**dst += *src
 	}
+}
+
+// ReportRun reinterprets legacy receipt intervals without rewriting stored evidence.
+func ReportRun(r Run) Run {
+	if r.Metrics.SchemaVersion < 2 {
+		r.Metrics.ToolReceiptIntervalMeanSeconds = r.Metrics.ToolLatencyMeanSeconds
+		r.Metrics.ToolReceiptIntervalP50Seconds = r.Metrics.ToolLatencyP50Seconds
+		r.Metrics.ToolReceiptIntervalP95Seconds = r.Metrics.ToolLatencyP95Seconds
+		r.Metrics.ToolLatencyMeanSeconds = nil
+		r.Metrics.ToolLatencyP50Seconds = nil
+		r.Metrics.ToolLatencyP95Seconds = nil
+		r.Metrics.TTFABasis = "legacy_unspecified"
+		r.Metrics.ToolTimingBasis = "runner_receipt"
+		r.Metrics.ToolTimingConfidence = "unverified"
+	}
+	return r
 }

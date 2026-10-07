@@ -29,7 +29,7 @@ func TestMetricsIgnoreStartupAndPairToolsByID(t *testing.T) {
 		{Type: "usage_reported", Usage: &Usage{OutputTokens: &tokens}},
 	}
 	m := Calculate(events, 10, nil)
-	if *m.TTFASeconds != 2 || m.ToolCalls != 3 || m.MatchedToolCalls != 2 || *m.ToolLatencyMeanSeconds != 2.5 || *m.ToolLatencyP95Seconds != 4 || *m.EffectiveOutputTPS != 10 || len(m.Warnings) != 1 {
+	if *m.TTFASeconds != 2 || m.ToolCalls != 3 || m.MatchedToolCalls != 2 || *m.ToolReceiptIntervalMeanSeconds != 2.5 || *m.ToolReceiptIntervalP95Seconds != 4 || *m.EffectiveOutputTPS != 10 || len(m.Warnings) != 2 {
 		t.Fatal(m)
 	}
 }
@@ -43,5 +43,28 @@ func TestUsageTotalsAndPercentiles(t *testing.T) {
 	values := []float64{5, 1, 3, 2, 4}
 	if *Percentile(values, .5) != 3 || *Percentile(values, .95) != 5 || values[0] != 5 || Percentile(nil, .5) != nil {
 		t.Fatal("percentile convention or mutation")
+	}
+}
+
+func TestReceiptTimingIsNotToolRuntime(t *testing.T) {
+	m := Calculate([]Event{
+		{Type: "assistant_output", TimingBasis: "text_delta_receipt", ElapsedNS: 100},
+		{Type: "assistant_message_receipt", TimingBasis: "complete_message_receipt", ElapsedNS: 200},
+		{Type: "tool_started", ToolID: "t", ElapsedNS: 1000000},
+		{Type: "tool_finished", ToolID: "t", ElapsedNS: 1053542},
+	}, 1, nil)
+	if m.ToolLatencyMeanSeconds != nil || m.ToolReceiptIntervalMeanSeconds == nil || *m.ToolReceiptIntervalMeanSeconds != .000053542 || m.TTFABasis != "text_delta_receipt" || m.FirstCompleteMessageSeconds == nil || m.FirstToolActionSeconds == nil {
+		t.Fatal(m)
+	}
+	legacy := ReportRun(Run{Metrics: Metrics{ToolLatencyMeanSeconds: m.ToolReceiptIntervalMeanSeconds}})
+	if legacy.Metrics.ToolLatencyMeanSeconds != nil || legacy.Metrics.ToolReceiptIntervalMeanSeconds == nil || legacy.Metrics.TTFABasis != "legacy_unspecified" {
+		t.Fatal(legacy)
+	}
+}
+
+func TestFinalOnlyResultEstablishesCompleteMessageReceipt(t *testing.T) {
+	m := Calculate([]Event{{Type: "final_output", Text: "Done", ElapsedNS: 2000000000}}, 3, nil)
+	if m.TTFASeconds == nil || *m.TTFASeconds != 2 || m.TTFABasis != "complete_message_receipt" || m.FirstTextDeltaSeconds != nil || m.FirstCompleteMessageSeconds == nil {
+		t.Fatal(m)
 	}
 }

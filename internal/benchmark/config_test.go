@@ -55,3 +55,21 @@ func TestSafeSeedPaths(t *testing.T) {
 		}
 	}
 }
+
+func TestReasoningEffortAndSequenceValidation(t *testing.T) {
+	cases := []string{
+		"name: test\nagents:\n - name: a\n   adapter: codex\n   reasoning_effort: unsupported\ncases:\n - name: x\n   prompt: hi\n",
+		"name: test\nagents:\n - name: a\n   adapter: claude\n   reasoning_effort: high\ncases:\n - name: x\n   prompt: hi\n",
+		"name: test\nagents:\n - name: a\n   adapter: generic\n   command: sh\ncases:\n - name: x\n   prompt: hi\n   verify:\n     integer_sequence: {start: -9223372036854775808, end: 9223372036854775807, end_marker: DONE}\n",
+	}
+	for _, text := range cases {
+		if _, err := loadText(t, text); err == nil {
+			t.Fatal("invalid configuration accepted")
+		}
+	}
+	text := "name: test\nagents:\n - name: a\n   adapter: codex\n   reasoning_effort: high\ncases:\n - name: x\n   prompt: hi\n   verify:\n     integer_sequence: {start: 1, end: 100, end_marker: DONE}\n"
+	cfg, err := loadText(t, text)
+	if err != nil || cfg.Agents[0].ReasoningEffort != "high" || cfg.Cases[0].Verify.IntegerSequence.End != 100 {
+		t.Fatal(cfg, err)
+	}
+}

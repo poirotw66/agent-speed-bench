@@ -24,6 +24,7 @@ type collector struct {
 	firstStdout     *float64
 	parseErrors     int
 	failed          bool
+	failure         *telemetry.Failure
 	err             error
 	cancel          func()
 }
@@ -116,8 +117,17 @@ func (c *collector) line(stream string, line []byte) error {
 		event.Agent = c.agent
 		event.TimestampNS = now.UnixNano()
 		event.ElapsedNS = elapsed
+		if event.Type == "tool_started" {
+			event.TimingBasis = "tool_start_receipt"
+		}
+		if event.Type == "tool_finished" {
+			event.TimingBasis = "tool_finish_receipt"
+		}
 		if event.Type == "agent_error" {
 			c.failed = true
+			if event.Failure != nil && (c.failure == nil || (c.failure.Scope != "agent" && event.Failure.Scope == "agent")) {
+				c.failure = event.Failure
+			}
 		}
 		if err := c.normalized.Encode(event); err != nil {
 			return err

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/poirotw66/agent-speed-bench/internal/benchmark"
@@ -57,6 +58,9 @@ func (p *parser) BuildCommand(prompt, workdir string) (Command, error) {
 		if p.agent.Model != "" {
 			c.Args = append(c.Args, "--model", p.agent.Model)
 		}
+		if p.agent.ReasoningEffort != "" {
+			c.Args = append(c.Args, "--config", "model_reasoning_effort="+strconv.Quote(p.agent.ReasoningEffort))
+		}
 		c.Args = append(c.Args, "-")
 		c.Stdin = prompt
 	case "claude":
@@ -99,9 +103,9 @@ func (p *parser) BuildCommand(prompt, workdir string) (Command, error) {
 func (p *parser) Capabilities() Capabilities {
 	switch p.agent.Adapter {
 	case "codex":
-		return Capabilities{StructuredOutput: true, TokenUsage: true, ToolIntervals: true, Notes: "Completed message items are buffered; tool intervals are observed item lifetimes."}
+		return Capabilities{StructuredOutput: true, TokenUsage: true, ToolIntervals: true, Notes: "Completed message items are buffered; tool intervals are runner receipt gaps, not execution durations."}
 	case "claude":
-		return Capabilities{StructuredOutput: true, TokenUsage: true, ToolIntervals: true, Notes: "Partial text deltas; tool_use to tool_result includes harness overhead. Final result usage is authoritative."}
+		return Capabilities{StructuredOutput: true, TokenUsage: true, ToolIntervals: true, Notes: "Partial text deltas; tool_use to tool_result receipt gaps do not establish runtime. Final result usage is authoritative."}
 	case "cursor":
 		return Capabilities{StructuredOutput: true, ToolIntervals: true, Notes: "Partial text deltas with duplicate flush filtering. Documented output has no token usage."}
 	case "demo":
@@ -115,6 +119,7 @@ func (p *parser) TerminalSeen() bool     { return p.terminal }
 
 // These structs intentionally ignore unknown fields for forward compatibility.
 type wire struct {
+	Model   string                     `json:"model"`
 	Type    string                     `json:"type"`
 	Subtype string                     `json:"subtype"`
 	IsError bool                       `json:"is_error"`
@@ -153,12 +158,12 @@ func (p *parser) ParseEvent(line []byte) ([]telemetry.Event, error) {
 		var e telemetry.Event
 		if err := json.Unmarshal(line, &e); err != nil {
 			if p.agent.Adapter == "generic" && !bytes.HasPrefix(bytes.TrimSpace(line), []byte("{")) {
-				return []telemetry.Event{{Type: "assistant_output", Text: string(line) + "\n"}}, nil
+				return []telemetry.Event{{Type: "assistant_output", Text: string(line) + "\n", TimingBasis: "stdout_line_receipt"}}, nil
 			}
 			return nil, err
 		}
 		switch e.Type {
-		case "assistant_output", "tool_started", "tool_finished", "usage_reported", "usage_total", "agent_ready":
+		case "assistant_output", "tool_started", "tool_finished", "usage_reported", "usage_total", "agent_ready", "agent_metadata", "assistant_message_receipt":
 			if e.Usage != nil {
 				for _, v := range []*int64{e.Usage.InputTokens, e.Usage.OutputTokens, e.Usage.CachedTokens} {
 					if v != nil && *v < 0 {
@@ -166,12 +171,19 @@ func (p *parser) ParseEvent(line []byte) ([]telemetry.Event, error) {
 					}
 				}
 			}
+			if e.Type == "assistant_output" && e.TimingBasis != "text_delta_receipt" && e.TimingBasis != "complete_message_receipt" {
+				e.TimingBasis = "stdout_line_receipt"
+			}
+			if e.Type == "tool_started" || e.Type == "tool_finished" {
+				e.TimingBasis = "tool_start_receipt"
+			}
 			return []telemetry.Event{e}, nil
 		case "agent_completed":
 			p.terminal = true
 			return []telemetry.Event{{Type: "agent_completed"}}, nil
 		case "agent_error":
-			return []telemetry.Event{{Type: "agent_error", Text: e.Text}}, nil
+			f := ClassifyFailure([]byte(e.Text))
+			return []telemetry.Event{{Type: "agent_error", Text: f.Message, Failure: f}}, nil
 		default:
 			return nil, nil
 		}
@@ -181,9 +193,13 @@ func (p *parser) ParseEvent(line []byte) ([]telemetry.Event, error) {
 		return nil, err
 	}
 	if w.Type == "error" || w.Type == "turn.failed" || w.IsError {
-		return []telemetry.Event{{Type: "agent_error", Text: "Agent reported failure; inspect raw.jsonl"}}, nil
+		f := ClassifyFailure(line)
+		return []telemetry.Event{{Type: "agent_error", Text: f.Message, Failure: f}}, nil
 	}
 	var events []telemetry.Event
+	if w.Model != "" {
+		events = append(events, telemetry.Event{Type: "agent_metadata", Model: w.Model})
+	}
 	switch p.agent.Adapter {
 	case "codex":
 		switch w.Type {
@@ -193,14 +209,14 @@ func (p *parser) ParseEvent(line []byte) ([]telemetry.Event, error) {
 			switch w.Item.Type {
 			case "agent_message":
 				if w.Type == "item.completed" && w.Item.Text != "" {
-					events = append(events, telemetry.Event{Type: "assistant_output", Text: w.Item.Text})
+					events = append(events, telemetry.Event{Type: "assistant_output", Text: w.Item.Text, TimingBasis: "complete_message_receipt"})
 				}
 			case "command_execution", "mcp_tool_call", "web_search":
 				t := "tool_started"
 				if w.Type == "item.completed" {
 					t = "tool_finished"
 				}
-				events = append(events, telemetry.Event{Type: t, ToolID: w.Item.ID, ToolName: w.Item.Type})
+				events = append(events, telemetry.Event{Type: t, TimingBasis: "tool_start_receipt", ToolID: w.Item.ID, ToolName: w.Item.Type})
 			}
 		case "turn.completed":
 			p.terminal = true
@@ -218,26 +234,37 @@ func (p *parser) ParseEvent(line []byte) ([]telemetry.Event, error) {
 		case "stream_event":
 			if w.Event.Type == "content_block_delta" && w.Event.Delta.Type == "text_delta" && w.Event.Delta.Text != "" {
 				p.streamed = true
-				events = append(events, telemetry.Event{Type: "assistant_output", Text: w.Event.Delta.Text})
+				events = append(events, telemetry.Event{Type: "assistant_output", Text: w.Event.Delta.Text, TimingBasis: "text_delta_receipt"})
 			}
 		case "assistant", "user":
 			var msg struct {
 				Content []content `json:"content"`
+				Model   string    `json:"model"`
 			}
 			if len(w.Message) > 0 {
 				if err := json.Unmarshal(w.Message, &msg); err != nil {
 					return nil, err
 				}
 			}
+			if msg.Model != "" {
+				events = append(events, telemetry.Event{Type: "agent_metadata", Model: msg.Model})
+			}
 			for _, block := range msg.Content {
 				switch block.Type {
 				case "text":
+					if w.Type == "assistant" && p.agent.Adapter == "claude" && block.Text != "" {
+						events = append(events, telemetry.Event{Type: "assistant_message_receipt", TimingBasis: "complete_message_receipt"})
+					}
 					valid := w.Type == "assistant" && !p.streamed
 					if p.agent.Adapter == "cursor" {
 						valid = w.Type == "assistant" && w.TimestampMS != nil && w.ModelCallID == ""
 					}
 					if valid && block.Text != "" {
-						events = append(events, telemetry.Event{Type: "assistant_output", Text: block.Text})
+						basis := "complete_message_receipt"
+						if p.agent.Adapter == "cursor" {
+							basis = "text_delta_receipt"
+						}
+						events = append(events, telemetry.Event{Type: "assistant_output", Text: block.Text, TimingBasis: basis})
 					}
 				case "tool_use":
 					if p.agent.Adapter == "claude" {
@@ -260,7 +287,7 @@ func (p *parser) ParseEvent(line []byte) ([]telemetry.Event, error) {
 					name = k
 					break
 				}
-				events = append(events, telemetry.Event{Type: t, ToolID: w.CallID, ToolName: name})
+				events = append(events, telemetry.Event{Type: t, TimingBasis: "tool_start_receipt", ToolID: w.CallID, ToolName: name})
 			}
 		case "result":
 			if w.Subtype != "success" {

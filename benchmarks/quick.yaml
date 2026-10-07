@@ -15,4 +15,7 @@ cases:
       Do not call tools or modify files. Print the integers 1 through 100,
       one per line, then print BENCH_DONE on its own line. Do not add commentary.
     verify:
-      output_contains: BENCH_DONE
+      integer_sequence:
+        start: 1
+        end: 100
+        end_marker: BENCH_DONE

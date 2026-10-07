@@ -126,8 +126,8 @@ func TestRunGradingAndTelemetryFailures(t *testing.T) {
 		{"passed", "generic", "printf Done", "completed", benchmark.Verify{OutputContains: "Done", TimeoutSeconds: 1}, boolPtr(true)},
 		{"grader-failed", "generic", "printf Done", "completed", benchmark.Verify{Command: "sh", Args: []string{"-c", "exit 1"}, TimeoutSeconds: 1}, boolPtr(false)},
 		{"agent-failed", "generic", "printf Done; exit 3", "failed", benchmark.Verify{OutputContains: "Done", TimeoutSeconds: 1}, boolPtr(false)},
-		{"malformed", "generic", `printf '{"type":invalid}\n'`, "telemetry_error", benchmark.Verify{TimeoutSeconds: 1}, boolPtr(false)},
-		{"incomplete", "codex", `printf '{"type":"item.completed","item":{"type":"agent_message","text":"Done"}}\n'`, "telemetry_error", benchmark.Verify{TimeoutSeconds: 1}, boolPtr(false)},
+		{"malformed", "generic", `printf '{"type":invalid}\n'`, "telemetry_error", benchmark.Verify{TimeoutSeconds: 1}, nil},
+		{"incomplete", "codex", `printf '{"type":"item.completed","item":{"type":"agent_message","text":"Done"}}\n'`, "telemetry_error", benchmark.Verify{TimeoutSeconds: 1}, nil},
 		{"reported-error", "generic", `printf '{"type":"agent_error","text":"failed"}\n'`, "failed", benchmark.Verify{TimeoutSeconds: 1}, boolPtr(false)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -267,5 +267,98 @@ func TestCanceledRunRemainsARecordedFailure(t *testing.T) {
 	}
 	if saved.Success == nil || *saved.Success {
 		t.Fatal(saved)
+	}
+}
+
+func TestFatalAgentFailureStopsOnlyThatAgent(t *testing.T) {
+	dir := t.TempDir()
+	store, err := storage.Open(filepath.Join(dir, "runs.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	task := fixtureTask()
+	task.Verify.OutputContains = "Done"
+	cfg := benchmark.Config{Name: "stop", Repeats: 5, Jobs: 1, TimeoutSeconds: 2, Cases: []benchmark.Case{task}, Agents: []benchmark.Agent{
+		{Name: "unavailable", Adapter: "generic", Command: "sh", Args: []string{"-c", `printf '{"type":"agent_error","text":"The model is not supported with this account"}\n'; exit 1`}},
+		{Name: "healthy", Adapter: "generic", Command: "sh", Args: []string{"-c", "printf Done"}},
+	}}
+	result, err := Execute(context.Background(), cfg, dir, store, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	skipped, unavailable, passed := 0, 0, 0
+	for _, r := range result.Runs {
+		switch r.Status {
+		case "skipped":
+			skipped++
+			if r.Success != nil || r.ExitCode != nil {
+				t.Fatal(r)
+			}
+		case "agent_unavailable":
+			unavailable++
+			if r.Success != nil || r.Error != "The model is not supported with this account" {
+				t.Fatal(r)
+			}
+		case "completed":
+			if r.Success != nil && *r.Success {
+				passed++
+			}
+		default:
+			t.Fatal(r)
+		}
+	}
+	if skipped != 4 || unavailable != 1 || passed != 5 || result.Manifest.StartedRuns != 6 || result.Manifest.SkippedRuns != 4 {
+		t.Fatal(result.Manifest, skipped, unavailable, passed)
+	}
+	stored, err := store.Runs(result.Manifest.ExperimentID)
+	if err != nil || len(stored) != 10 {
+		t.Fatal(stored, err)
+	}
+}
+
+func TestSettingsSnapshotExcludesSecretsAndDistinguishesRequests(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CODEX_HOME", dir)
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte("model = 'configured'\nmodel_reasoning_effort = 'high'\nsecret = 'SECRET_CANARY'\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s := snapshotSettings(benchmark.Agent{Adapter: "codex", Model: "requested", ReasoningEffort: "low"})
+	data, err := json.Marshal(s)
+	if err != nil || strings.Contains(string(data), "SECRET_CANARY") || s.RequestedModel != "requested" || s.ConfiguredModel == nil || *s.ConfiguredModel != "configured" || s.ObservedModel != nil || s.ConfigStatus != "user_config_only" {
+		t.Fatal(s, err)
+	}
+	if err := os.WriteFile(path, []byte("not TOML = ["), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s = snapshotSettings(benchmark.Agent{Adapter: "codex"})
+	if s.ConfigStatus != "invalid" || s.ConfiguredModel != nil {
+		t.Fatal(s)
+	}
+}
+
+func TestTransientFailuresDoNotStopRemainingRepeats(t *testing.T) {
+	dir := t.TempDir()
+	store, err := storage.Open(filepath.Join(dir, "runs.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	task := fixtureTask()
+	cfg := benchmark.Config{Name: "transient", Repeats: 3, Jobs: 1, TimeoutSeconds: 2, Cases: []benchmark.Case{task}, Agents: []benchmark.Agent{
+		{Name: "busy", Adapter: "generic", Command: "sh", Args: []string{"-c", `printf '%s\n' '{"type":"agent_error","text":"{\"status\":429,\"error\":{\"message\":\"Busy\"}}"}'; exit 1`}},
+	}}
+	result, err := Execute(context.Background(), cfg, dir, store, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Manifest.SkippedRuns != 0 || len(result.Runs) != 3 {
+		t.Fatal(result)
+	}
+	for _, r := range result.Runs {
+		if r.Status != "service_error" || r.Success != nil || r.Failure == nil || r.Failure.Category != "service" || !r.Failure.Retryable {
+			t.Fatal(r)
+		}
 	}
 }

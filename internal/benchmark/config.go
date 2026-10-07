@@ -13,22 +13,30 @@ import (
 )
 
 type Agent struct {
-	Name        string   `yaml:"name" json:"name"`
-	Adapter     string   `yaml:"adapter" json:"adapter"`
-	Model       string   `yaml:"model,omitempty" json:"model,omitempty"`
-	Command     string   `yaml:"command,omitempty" json:"command,omitempty"`
-	Args        []string `yaml:"args,omitempty" json:"args,omitempty"`
-	VersionArgs []string `yaml:"version_args,omitempty" json:"version_args,omitempty"`
+	Name            string   `yaml:"name" json:"name"`
+	Adapter         string   `yaml:"adapter" json:"adapter"`
+	Model           string   `yaml:"model,omitempty" json:"model,omitempty"`
+	ReasoningEffort string   `yaml:"reasoning_effort,omitempty" json:"reasoning_effort,omitempty"`
+	Command         string   `yaml:"command,omitempty" json:"command,omitempty"`
+	Args            []string `yaml:"args,omitempty" json:"args,omitempty"`
+	VersionArgs     []string `yaml:"version_args,omitempty" json:"version_args,omitempty"`
 }
 type Repo struct {
 	Path   string `yaml:"path" json:"path"`
 	Commit string `yaml:"commit" json:"commit"`
 }
 type Verify struct {
-	Command        string   `yaml:"command,omitempty" json:"command,omitempty"`
-	Args           []string `yaml:"args,omitempty" json:"args,omitempty"`
-	OutputContains string   `yaml:"output_contains,omitempty" json:"output_contains,omitempty"`
-	TimeoutSeconds int      `yaml:"timeout_seconds,omitempty" json:"timeout_seconds,omitempty"`
+	Command         string           `yaml:"command,omitempty" json:"command,omitempty"`
+	Args            []string         `yaml:"args,omitempty" json:"args,omitempty"`
+	OutputContains  string           `yaml:"output_contains,omitempty" json:"output_contains,omitempty"`
+	OutputEquals    *string          `yaml:"output_equals,omitempty" json:"output_equals,omitempty"`
+	IntegerSequence *IntegerSequence `yaml:"integer_sequence,omitempty" json:"integer_sequence,omitempty"`
+	TimeoutSeconds  int              `yaml:"timeout_seconds,omitempty" json:"timeout_seconds,omitempty"`
+}
+type IntegerSequence struct {
+	Start     int    `yaml:"start" json:"start"`
+	End       int    `yaml:"end" json:"end"`
+	EndMarker string `yaml:"end_marker" json:"end_marker"`
 }
 type Case struct {
 	Name           string            `yaml:"name" json:"name"`
@@ -145,6 +153,16 @@ func (c Config) Validate() error {
 		if a.Adapter != "generic" && len(a.Args) > 0 {
 			return fmt.Errorf("agent %s: args are only allowed for generic adapters", a.Name)
 		}
+		if a.ReasoningEffort != "" {
+			if a.Adapter != "codex" {
+				return fmt.Errorf("agent %s: reasoning_effort is currently supported only for codex", a.Name)
+			}
+			switch a.ReasoningEffort {
+			case "minimal", "low", "medium", "high", "xhigh", "max":
+			default:
+				return fmt.Errorf("agent %s: invalid reasoning_effort", a.Name)
+			}
+		}
 	}
 	seen = map[string]bool{}
 	for _, task := range c.Cases {
@@ -171,6 +189,11 @@ func (c Config) Validate() error {
 		}
 		if task.Verify.Command == "" && len(task.Verify.Args) > 0 {
 			return fmt.Errorf("case %s verifier args require command", task.Name)
+		}
+		if seq := task.Verify.IntegerSequence; seq != nil {
+			if seq.Start < -1000000 || seq.End > 1000000 || seq.End < seq.Start || int64(seq.End)-int64(seq.Start) > 10000 || strings.TrimSpace(seq.EndMarker) == "" || strings.ContainsAny(seq.EndMarker, "\r\n") {
+				return fmt.Errorf("case %s has invalid integer_sequence", task.Name)
+			}
 		}
 	}
 	return nil
