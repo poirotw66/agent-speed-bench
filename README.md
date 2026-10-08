@@ -348,3 +348,23 @@ Normal run/resume attempts recheck declared scoring inputs and direct verifier/c
 These checks detect persistent changes at their boundaries; they are not an immutable scoring snapshot and cannot guarantee detection of a change reverted between checks. Undeclared dependencies remain outside the guard. Hash checking happens outside agent process wall time.
 
 Each aggregated speed metric now shows its actual observed sample count `n`: wall time, TTFA, effective tokens/s, characters/s, answer completion, exit gap and preparation. Passed-only speed metrics show separate counts. Missing values are excluded, explicit observed zeros remain valid, and `n=0` stays unknown. Each metric with 1–9 samples is labeled small sample even when the group has ten completed or passing attempts. Existing metric/accounting/environment grouping is retained.
+
+## Clean installation, archived binaries and live progress
+
+```sh
+# Requires clean committed sources, Python 3.9+ and Go on PATH.
+make install
+# Restore the harness hash recorded in the old experiment manifest.
+python3 scripts/install-local.py --restore <full-sha256>
+agentspeedbench resume -db agentspeedbench.db runs/<experiment>
+# Install the current clean commit again when finished with the old experiment.
+make install
+```
+
+Installation compiles with VCS metadata, verifies the current commit and `dirty=false`, and rejects source changes during compilation. Both previous and new executables are archived under `~/.local/share/agentspeedbench/binaries/<sha256>/agentspeedbench` before atomic replacement of `~/.local/bin/agentspeedbench`. Corrupt archives are rejected. Restore uses the original installation path so executable-path provenance can still match. CLI binaries, configuration and scoring dependencies must still satisfy the experiment's resume guards. `--bin-dir` and `--archive-dir` support separate installations. This archives executables, not credentials or entire execution environments.
+
+CI now runs `make check` on macOS and Linux, including broken/fixed scoring-fixture gates and installer preservation/corruption checks, followed by the offline CLI demo. Local success alone does not establish a hosted CI result.
+
+Each recorded attempt includes `timing`: monotonic elapsed durations for workflow preparation, verification (including integrity checks), artifact capture, cleanup, and total. Individual command scoring layers also retain their process wall seconds. Workflow total starts after the artifact directory is created and ends before the final record write; it includes agent execution and postprocessing, but excludes experiment preflight, final JSON/SQLite writes, queue waiting and report generation. Agent wall time and effective output tok/s keep their original definitions. Unreached stages and historical timing remain unknown. Reports show workflow medians with observed sample counts alongside agent speed.
+
+While an attempt runs, CLI progress reports its phase, elapsed attempt time, and the last observed agent/verifier output timestamp and age. It prints phase changes and a heartbeat every 30 seconds. Output receipt includes partial lines; no observation remains `unknown`. Silence is not classified as a stuck model, and progress does not trigger retries or change grades. Progress is CLI output, separate from vendor telemetry events.

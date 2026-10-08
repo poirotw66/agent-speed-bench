@@ -230,3 +230,25 @@ func TestMetricCountsUseObservedValuesAndWarnForPassedSubset(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkflowTimingsAreSeparateFromAgentSpeedAndUnknownHistorically(t *testing.T) {
+	value := 0.5
+	passed := true
+	runs := []telemetry.Run{{ExperimentID: "e", Agent: "a", Case: "c", Status: "completed", Success: &passed, Metrics: telemetry.Metrics{SchemaVersion: 2, WallSeconds: 1}, Timing: &telemetry.AttemptTiming{TotalSeconds: 3, VerificationSeconds: &value, CaptureSeconds: &value, CleanupSeconds: &value, PreparationSeconds: &value}}}
+	group := Aggregate(runs)[0]
+	if *group.WallP50 != 1 || *group.TotalP50 != 3 || *group.VerificationP50 != 0.5 || group.Counts.Total != 1 {
+		t.Fatal(group)
+	}
+	var html bytes.Buffer
+	if err := HTML(&html, runs); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(html.String(), "Workflow p50, s") || !strings.Contains(html.String(), "Workflow total: 3.000 s") {
+		t.Fatal(html.String())
+	}
+	runs[0].Timing = nil
+	group = Aggregate(runs)[0]
+	if group.TotalP50 != nil || group.Counts.Total != 0 {
+		t.Fatal("historical timing invented", group)
+	}
+}

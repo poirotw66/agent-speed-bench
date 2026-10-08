@@ -101,14 +101,26 @@ type Metrics struct {
 }
 
 type VerificationResult struct {
-	Layer    string `json:"layer"`
-	Command  string `json:"command"`
-	ExitCode *int   `json:"exit_code"`
-	Passed   bool   `json:"passed"`
-	Error    string `json:"error,omitempty"`
+	WallSeconds *float64 `json:"wall_seconds,omitempty"`
+	Layer       string   `json:"layer"`
+	Command     string   `json:"command"`
+	ExitCode    *int     `json:"exit_code"`
+	Passed      bool     `json:"passed"`
+	Error       string   `json:"error,omitempty"`
+}
+
+type AttemptTiming struct {
+	StartedAt           time.Time `json:"started_at"`
+	FinishedAt          time.Time `json:"finished_at"`
+	TotalSeconds        float64   `json:"total_seconds"`
+	PreparationSeconds  *float64  `json:"preparation_seconds"`
+	VerificationSeconds *float64  `json:"verification_seconds"`
+	CaptureSeconds      *float64  `json:"capture_seconds"`
+	CleanupSeconds      *float64  `json:"cleanup_seconds"`
 }
 
 type Run struct {
+	Timing         *AttemptTiming       `json:"timing,omitempty"`
 	PatchBaseline  string               `json:"patch_baseline,omitempty"`
 	ArtifactErrors []string             `json:"artifact_errors,omitempty"`
 	Environment    Environment          `json:"environment"`

@@ -220,3 +220,23 @@ agentspeedbench version
 這是邊界檢查，不是不可變的評分快照；不能保證發現兩次檢查之間改動後又還原的情況。未宣告依賴仍不涵蓋。雜湊檢查不計入 agent 程序 wall time。
 
 各彙總速度指標新增自己的有效樣本數 `n`，涵蓋 wall time、TTFA、有效 tokens/s、字元每秒、答案完成、退出間隔與準備時間；僅通過樣本也各自計數。缺少數值不計入，明確回報的零值仍有效，`n=0` 保持未知。各指標只有 1–9 筆時，逐項標示小樣本，即使整組已有十筆完成或通過紀錄。時間基準、計數定義與環境分組保持原有規則。
+
+## 乾淨安裝、版本保存與執行進度
+
+```sh
+# 需要乾淨且已 commit 的來源、Python 3.9+，以及 PATH 中的 Go。
+make install
+# 使用舊 manifest 中的 harness binary SHA-256 恢復版本。
+python3 scripts/install-local.py --restore <full-sha256>
+agentspeedbench resume -db agentspeedbench.db runs/<experiment>
+# 舊實驗處理完後，重新安裝目前乾淨的 commit。
+make install
+```
+
+安裝會核對來源 commit 與 `dirty=false`，編譯期間來源改變則拒絕安裝。替換 `~/.local/bin/agentspeedbench` 前，新舊 binary 都保存到 `~/.local/share/agentspeedbench/binaries/<sha256>/agentspeedbench`；保存內容雜湊不符時拒絕替換。恢復時使用原安裝路徑，讓執行檔路徑能與舊實驗一致；CLI、設定及評分依賴仍必須通過續跑檢查。可用 `--bin-dir`／`--archive-dir` 指定獨立安裝位置。保存的是執行檔，不是登入資料或完整環境。
+
+CI 的 macOS／Linux 工作改為執行完整 `make check`，涵蓋壞版失敗／修正版通過的案例驗證，以及安裝保存／損壞拒絕測試，再執行離線 CLI demo。本機通過不等同 hosted CI 已通過。
+
+每筆實際工作新增 `timing`，記錄工作流程準備、評分（含完整性檢查）、artifact 保存、清理與總時間；各 command 評分層也記錄程序 wall time。總時間從建立 artifact 目錄後到最終紀錄寫入前，涵蓋 agent 與輸出後處理，排除實驗 preflight、最終 JSON／SQLite 寫入、排隊及報告產生。原 agent wall time 與有效 tokens/s 定義不變。未進入的階段與歷史資料保持未知；報告另列工作流程中位數及各自有效樣本數。
+
+CLI 會在階段切換時及每 30 秒顯示進度，包含目前階段、工作經過時間、最近收到 agent／verifier 輸出的 UTC 時間與距今多久；未換行的部分輸出也會更新觀察時間。沒有輸出時保持 `unknown`，不直接判定卡住，不觸發重試或改變評分。進度輸出與廠商 telemetry 事件分開。

@@ -80,3 +80,9 @@ Implemented follow-up items 3 and 4. Matrix attempts use the experiment's origin
 All displayed speed medians/percentiles carry observed sample counts, including separate passed-only counts. Missing values remain absent, reported zeros count, and per-metric samples below ten are flagged independently of overall completed/passed counts. Earlier item 1/2 changes are included in this same increment.
 
 Validation for items 3/4: make check passed with race tests and all fixture gates; Linux amd64 cross-build passed. Tests cover declared-input modification/addition/removal, changes during a scoring layer, retained layer evidence, and direct-verifier drift blocking subsequent agent calls. A ten-pass fixture with missing metrics confirms each metric's own count, valid zero values and small-sample labels. Offline CLI validation blocked both grading and the next agent invocation after input drift. Historical reports were regenerated separately with sample counts, and the local binary was refreshed. No vendor prompts were invoked.
+
+## Delivery and workflow observability
+
+Implemented the four requested delivery/observability items: hosted workflows call the full make check fixture/installer gates; clean-commit installation archives both harness versions and supports hash-validated restoration; attempt records and reports separate preparation, verification, capture, cleanup and workflow totals from agent wall time; phase transitions and 30-second heartbeats expose last observed output without inferring a stuck model.
+
+Timing uses monotonic clocks, includes deferred capture/cleanup, and excludes experiment preflight, final metadata/database writes and report generation. Unreached and historical timing is unknown. Installation refuses dirty sources and requires matching clean VCS build metadata. Existing YOLO adapter and immutable scoring policies are retained.

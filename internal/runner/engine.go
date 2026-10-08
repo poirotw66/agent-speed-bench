@@ -150,6 +150,9 @@ func executeMatrix(ctx context.Context, cfg benchmark.Config, result Result, sto
 	start := time.Now()
 	dir, experiment := result.Directory, result.Manifest.ExperimentID
 	scoringGuard := func() error { return checkScoringProvenance(cfg, result.Manifest.Provenance) }
+	if progress != nil {
+		progress = &lockedWriter{w: progress}
+	}
 	covered := map[string]bool{}
 	for _, r := range result.Runs {
 		covered[jobKey(r.Agent, r.Case, r.Repeat, r.Warmup)] = true
@@ -182,7 +185,7 @@ func executeMatrix(ctx context.Context, cfg benchmark.Config, result Result, sto
 				if reason != nil {
 					r, runErr = skippedRun(j.agent, j.task, j.repeat, experiment, dir, reason)
 				} else {
-					r, runErr = executeAttempt(ctx, j.agent, j.task, j.repeat, experiment, dir, j.warmup, scoringGuard)
+					r, runErr = executeAttempt(ctx, j.agent, j.task, j.repeat, experiment, dir, j.warmup, attemptOptions{guard: scoringGuard, progress: progress})
 				}
 				r.Warmup = j.warmup
 				if runErr == nil {
@@ -287,7 +290,7 @@ func executeOne(parent context.Context, a benchmark.Agent, task benchmark.Case, 
 	return executeAttempt(parent, a, task, repeat, experiment, dir, false)
 }
 
-func executeAttempt(parent context.Context, a benchmark.Agent, task benchmark.Case, repeat int, experiment, dir string, warmup bool, guards ...func() error) (r telemetry.Run, err error) {
+func executeAttempt(parent context.Context, a benchmark.Agent, task benchmark.Case, repeat int, experiment, dir string, warmup bool, options ...attemptOptions) (r telemetry.Run, err error) {
 	id, err := newID()
 	if err != nil {
 		return r, err
@@ -297,8 +300,14 @@ func executeAttempt(parent context.Context, a benchmark.Agent, task benchmark.Ca
 	if err := os.Mkdir(r.ArtifactDir, 0700); err != nil {
 		return r, err
 	}
+	opts := attemptOptions{}
+	if len(options) > 0 {
+		opts = options[0]
+	}
+	monitor := newAttemptMonitor(a.Name, task.Name, r.ID, opts.progress, opts.interval)
 	// Store a record even for workspace or executable startup failures.
 	defer func() {
+		r.Timing = monitor.finish()
 		if r.Status != "completed" && !ungradedFailure(r.Status) && r.Success == nil {
 			failed := false
 			r.Success = &failed
@@ -308,8 +317,8 @@ func executeAttempt(parent context.Context, a benchmark.Agent, task benchmark.Ca
 		}
 	}()
 	var scoringGuard func() error
-	if len(guards) > 0 {
-		scoringGuard = guards[0]
+	if opts.guard != nil {
+		scoringGuard = opts.guard
 	} else {
 		scoringGuard, err = standaloneScoringGuard(task)
 	}
@@ -337,7 +346,7 @@ func executeAttempt(parent context.Context, a benchmark.Agent, task benchmark.Ca
 		}
 		return r, nil
 	}
-	defer os.RemoveAll(workdir)
+	defer func() { monitor.setPhase("cleanup"); os.RemoveAll(workdir) }()
 	workspace := filepath.Join(workdir, "workspace")
 	prepStart := time.Now()
 	r.Environment.GoCachePolicy = task.GoCache
@@ -369,6 +378,7 @@ func executeAttempt(parent context.Context, a benchmark.Agent, task benchmark.Ca
 	}
 	r.PatchBaseline = baseline
 	defer func() {
+		monitor.setPhase("capture")
 		// Preserve submissions before removing the workspace, even after cancellation.
 		captureCtx, captureCancel := context.WithTimeout(context.WithoutCancel(parent), 10*time.Second)
 		defer captureCancel()
@@ -426,13 +436,15 @@ func executeAttempt(parent context.Context, a benchmark.Agent, task benchmark.Ca
 	defer cancel()
 	start := time.Now()
 	r.StartedAt = start.UTC()
-	c := &collector{start: start, runID: r.ID, agent: a.Name, parser: adapter, raw: json.NewEncoder(files[2]), normalized: json.NewEncoder(files[3]), cancel: cancel}
+	c := &collector{start: start, runID: r.ID, agent: a.Name, parser: adapter, raw: json.NewEncoder(files[2]), normalized: json.NewEncoder(files[3]), cancel: cancel, receipt: monitor.receipt}
 	if err := c.lifecycle("run_started"); err != nil {
 		return r, err
 	}
 	out := &lineWriter{collector: c, stream: "stdout", file: files[0]}
 	stderr := &lineWriter{collector: c, stream: "stderr", file: files[1]}
+	monitor.setPhase("agent")
 	p := RunProcess(ctx, command, workspace, out, stderr)
+	monitor.setPhase("postprocess")
 	if flushErr := out.flush(); flushErr != nil {
 		return r, flushErr
 	}
@@ -541,6 +553,7 @@ func executeAttempt(parent context.Context, a benchmark.Agent, task benchmark.Ca
 	if !task.Verify.HasChecks() {
 		return r, nil
 	}
+	monitor.setPhase("verification")
 	if checkErr := scoringGuard(); checkErr != nil {
 		scoringInvalid(checkErr)
 		return r, nil
@@ -568,15 +581,18 @@ func executeAttempt(parent context.Context, a benchmark.Agent, task benchmark.Ca
 		var locked lockedWriter
 		locked.w = f
 		for i, check := range checks {
+			monitor.setPhase("verification:" + layers[i])
 			if checkErr := scoringGuard(); checkErr != nil {
 				scoringInvalid(checkErr)
 				break
 			}
 			fmt.Fprintf(&locked, "Scoring layer: %s\n", layers[i])
 			vctx, vcancel := context.WithTimeout(parent, time.Duration(task.Verify.TimeoutSeconds)*time.Second)
-			graded := RunProcess(vctx, adapters.Command{Path: check.Command, Args: check.Args}, workspace, &locked, &locked)
+			observed := &receiptWriter{writer: &locked, receipt: monitor.receipt}
+			graded := RunProcess(vctx, adapters.Command{Path: check.Command, Args: check.Args}, workspace, observed, observed)
 			vcancel()
-			vr := telemetry.VerificationResult{Layer: layers[i], Command: check.Command, ExitCode: graded.ExitCode, Passed: graded.Err == nil}
+			verifierWall := graded.Wall.Seconds()
+			vr := telemetry.VerificationResult{WallSeconds: &verifierWall, Layer: layers[i], Command: check.Command, ExitCode: graded.ExitCode, Passed: graded.Err == nil}
 			if graded.Err != nil {
 				pass = false
 				vr.Error = graded.Err.Error()

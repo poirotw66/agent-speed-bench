@@ -28,6 +28,7 @@ type collector struct {
 	failure           *telemetry.Failure
 	err               error
 	cancel            func()
+	receipt           func(time.Time)
 }
 type lineWriter struct {
 	collector *collector
@@ -47,6 +48,9 @@ func (w *lineWriter) Write(data []byte) (int, error) {
 		c.err = err
 		c.cancel()
 		return 0, err
+	}
+	if len(data) > 0 && c.receipt != nil {
+		c.receipt(time.Now())
 	}
 	w.pending = append(w.pending, data...)
 	for {
