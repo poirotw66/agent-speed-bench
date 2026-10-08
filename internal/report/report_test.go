@@ -190,3 +190,43 @@ func TestCoverageIncludesUndispatchedJobsAndMissingManifests(t *testing.T) {
 		t.Fatal(err, html.String())
 	}
 }
+
+func TestMetricCountsUseObservedValuesAndWarnForPassedSubset(t *testing.T) {
+	passed := true
+	zero := 0.0
+	value := 2.0
+	runs := []telemetry.Run{}
+	for i := 0; i < 10; i++ {
+		r := telemetry.Run{ExperimentID: "e", Agent: "a", Case: "c", Status: "completed", Success: &passed, Metrics: telemetry.Metrics{SchemaVersion: 2, WallSeconds: 1}}
+		if i < 3 {
+			r.Metrics.TTFASeconds = &value
+		}
+		if i < 2 {
+			r.Metrics.EffectiveOutputTPS = &zero
+		}
+		if i < 4 {
+			r.Metrics.AnswerCompleteSeconds = &value
+		}
+		if i < 5 {
+			r.Metrics.TerminalToExitSeconds = &value
+		}
+		if i < 7 {
+			r.Environment.PreparationSeconds = &zero
+		}
+		runs = append(runs, r)
+	}
+	group := Aggregate(runs)[0]
+	if group.Counts.Wall != 10 || group.Counts.TTFA != 3 || group.Counts.OutputTPS != 2 || group.Counts.Characters != 0 || group.Counts.AnswerComplete != 4 || group.Counts.ExitGap != 5 || group.Counts.Preparation != 7 || group.PassedCounts.OutputTPS != 2 || group.PassedSamples != 10 {
+		t.Fatal(group)
+	}
+	var html, text bytes.Buffer
+	if err := HTML(&html, runs); err != nil {
+		t.Fatal(err)
+	}
+	Text(&text, runs)
+	for _, want := range []string{"0.000 (n=2; small sample)", "2.000 (n=3; small sample)", "unknown (n=0)"} {
+		if !strings.Contains(html.String(), want) || !strings.Contains(text.String(), want) {
+			t.Fatal("missing metric-specific sample evidence", want)
+		}
+	}
+}

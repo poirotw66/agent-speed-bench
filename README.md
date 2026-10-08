@@ -334,3 +334,17 @@ agentspeedbench version
 ```
 
 The version command includes the build's source commit, dirty state, commit timestamp, Go version and platform. Unavailable build metadata remains `unknown`; commit time is not compilation time. Patch capture uses a private Git index to preserve baseline-relative deletions, index removal, recreated files and additions without changing the agent's index. Source capture still reports a missing required retained source separately.
+
+## Verification interruption and artifact errors
+
+Cancellation during command verification records `canceled` with an unknown grade and stops later scoring layers. A verifier that cannot start records ungraded `infrastructure_error` with code `verifier_start`; a started verifier returning a failing exit code remains a task failure. The existing verifier-deadline policy remains graded failure. Completed scoring-layer evidence is retained even when later verification is interrupted.
+
+Requested artifact capture errors remain in `artifact_errors` without changing the primary status, grade or failure, including passing and ungraded attempts. CLI `run` and `resume` still exit unsuccessfully for measured attempts with capture errors, with an explicit message that grading results are preserved. The report shows capture errors separately. Existing historical records are not rewritten or assigned recovered grades.
+
+## Scoring integrity during execution and metric sample counts
+
+Normal run/resume attempts recheck declared scoring inputs and direct verifier/cache-preparation executable hashes against the experiment manifest before invoking an agent, before grading, and before/after each command scoring layer. Changed, added, removed or unreadable dependencies produce ungraded `infrastructure_error` with code `scoring_inputs_changed`. Later scoring layers stop; subsequent attempts fail the same guard before invoking agents. Prior raw records and scoring-layer evidence remain intact. Checks use the original experiment baseline rather than accepting a new baseline for each repeat.
+
+These checks detect persistent changes at their boundaries; they are not an immutable scoring snapshot and cannot guarantee detection of a change reverted between checks. Undeclared dependencies remain outside the guard. Hash checking happens outside agent process wall time.
+
+Each aggregated speed metric now shows its actual observed sample count `n`: wall time, TTFA, effective tokens/s, characters/s, answer completion, exit gap and preparation. Passed-only speed metrics show separate counts. Missing values are excluded, explicit observed zeros remain valid, and `n=0` stays unknown. Each metric with 1–9 samples is labeled small sample even when the group has ten completed or passing attempts. Existing metric/accounting/environment grouping is retained.

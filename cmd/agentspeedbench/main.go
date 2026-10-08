@@ -100,6 +100,9 @@ func run(ctx context.Context, args []string) error {
 			if r.Warmup {
 				continue
 			}
+			if len(r.ArtifactErrors) > 0 {
+				return errors.New("requested artifacts could not be retained; grading results are preserved; inspect report.html")
+			}
 			if r.Status != "completed" || (r.Success != nil && !*r.Success) {
 				return errors.New("one or more benchmark attempts did not complete or pass; inspect report.html")
 			}

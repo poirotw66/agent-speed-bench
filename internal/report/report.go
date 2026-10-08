@@ -10,7 +10,12 @@ import (
 	"github.com/poirotw66/agent-speed-bench/internal/telemetry"
 )
 
+type MetricCounts struct {
+	Wall, TTFA, OutputTPS, Characters, AnswerComplete, ExitGap, Preparation, PassedPerWallHour int
+}
+
 type Group struct {
+	Counts, PassedCounts                                                 MetricCounts
 	PassedSamples                                                        int
 	PassedWallP50, PassedTTFAP50, PassedTPSP50, PassedCharactersP50      *float64
 	GoCachePolicy, IsolationPolicy, PermissionPolicy, InstructionsPolicy string
@@ -75,7 +80,9 @@ func Aggregate(runs []telemetry.Run) []Group {
 		if r.Status == "completed" {
 			if r.Success != nil && *r.Success {
 				s.group.PassedSamples++
-				s.passedWalls = append(s.passedWalls, r.Metrics.WallSeconds)
+				if r.Metrics.WallSeconds > 0 {
+					s.passedWalls = append(s.passedWalls, r.Metrics.WallSeconds)
+				}
 				if r.Metrics.TTFASeconds != nil {
 					s.passedTTFAs = append(s.passedTTFAs, *r.Metrics.TTFASeconds)
 				}
@@ -106,6 +113,8 @@ func Aggregate(runs []telemetry.Run) []Group {
 	result := []Group{}
 	for _, s := range groups {
 		g := s.group
+		g.Counts = MetricCounts{Wall: len(s.walls), TTFA: len(s.ttfas), OutputTPS: len(s.rates), Characters: len(s.characterRates), AnswerComplete: len(s.answers), ExitGap: len(s.exitGaps), Preparation: len(s.preparations)}
+		g.PassedCounts = MetricCounts{Wall: len(s.passedWalls), TTFA: len(s.passedTTFAs), OutputTPS: len(s.passedRates), Characters: len(s.passedCharacters)}
 		g.PassedWallP50 = telemetry.Percentile(s.passedWalls, .5)
 		g.PassedTTFAP50 = telemetry.Percentile(s.passedTTFAs, .5)
 		g.PassedTPSP50 = telemetry.Percentile(s.passedRates, .5)
@@ -129,6 +138,7 @@ func Aggregate(runs []telemetry.Run) []Group {
 		if s.totalWall > 0 && g.Graded == g.Runs && len(s.walls) == g.Runs {
 			v := 3600 * float64(g.Passed) / s.totalWall
 			g.PassedPerWallHour = &v
+			g.Counts.PassedPerWallHour = len(s.walls)
 		}
 		result = append(result, g)
 	}
@@ -177,13 +187,13 @@ func Text(w io.Writer, runs []telemetry.Run, plans ...Plan) {
 	fmt.Fprintln(w, "Agent / case | runs | pass / graded | wall p50 / p95 (s) | TTFA p50 (s) | effective output tok/s p50 | passed / wall hour")
 	for _, g := range Aggregate(runs) {
 		fmt.Fprintf(w, "Experiment: %s\n", g.Experiment)
-		fmt.Fprintf(w, "Passed-only: samples=%d wall p50=%s TTFA p50=%s effective tok/s p50=%s characters/s p50=%s\n", g.PassedSamples, number(g.PassedWallP50), number(g.PassedTTFAP50), number(g.PassedTPSP50), number(g.PassedCharactersP50))
+		fmt.Fprintf(w, "Passed-only: samples=%d wall p50=%s TTFA p50=%s effective tok/s p50=%s characters/s p50=%s\n", g.PassedSamples, metric(g.PassedWallP50, g.PassedCounts.Wall), metric(g.PassedTTFAP50, g.PassedCounts.TTFA), metric(g.PassedTPSP50, g.PassedCounts.OutputTPS), metric(g.PassedCharactersP50, g.PassedCounts.Characters))
 		if g.Completed < 10 {
 			fmt.Fprintln(w, "Small sample: fewer than 10 completed measured runs; descriptive only.")
 		}
-		fmt.Fprintf(w, "Environment: cache=%s isolation=%s permissions=%s instructions=%s; preparation p50=%s; wall IQR=%s–%s min/max=%s–%s\n", policy(g.GoCachePolicy), policy(g.IsolationPolicy), policy(g.PermissionPolicy), policy(g.InstructionsPolicy), duration(g.PreparationP50), number(g.WallP25), number(g.WallP75), number(g.WallMin), number(g.WallMax))
-		fmt.Fprintf(w, "Receipt answer p50=%s; exit gap p50=%s; characters/s p50=%s\n", duration(g.AnswerCompleteP50), duration(g.ExitGapP50), number(g.CharactersPerSecondP50))
-		fmt.Fprintf(w, "%s / %s | %d | %d / %d | %s / %s | %s | %s | %s\n", g.Agent, g.Case, g.Runs, g.Passed, g.Graded, number(g.WallP50), number(g.WallP95), number(g.TTFAP50)+" ["+g.TTFABasis+"]", number(g.EffectiveTPSP50)+" ["+accounting(g.OutputTokenAccounting)+"]", number(g.PassedPerWallHour))
+		fmt.Fprintf(w, "Environment: cache=%s isolation=%s permissions=%s instructions=%s; preparation p50=%s; wall IQR=%s–%s min/max=%s–%s\n", policy(g.GoCachePolicy), policy(g.IsolationPolicy), policy(g.PermissionPolicy), policy(g.InstructionsPolicy), metricDuration(g.PreparationP50, g.Counts.Preparation), metric(g.WallP25, g.Counts.Wall), metric(g.WallP75, g.Counts.Wall), metric(g.WallMin, g.Counts.Wall), metric(g.WallMax, g.Counts.Wall))
+		fmt.Fprintf(w, "Receipt answer p50=%s; exit gap p50=%s; characters/s p50=%s\n", metricDuration(g.AnswerCompleteP50, g.Counts.AnswerComplete), metricDuration(g.ExitGapP50, g.Counts.ExitGap), metric(g.CharactersPerSecondP50, g.Counts.Characters))
+		fmt.Fprintf(w, "%s / %s | %d | %d / %d | %s / %s | %s | %s | %s\n", g.Agent, g.Case, g.Runs, g.Passed, g.Graded, metric(g.WallP50, g.Counts.Wall), metric(g.WallP95, g.Counts.Wall), metric(g.TTFAP50, g.Counts.TTFA)+" ["+g.TTFABasis+"]", metric(g.EffectiveTPSP50, g.Counts.OutputTPS)+" ["+accounting(g.OutputTokenAccounting)+"]", metric(g.PassedPerWallHour, g.Counts.PassedPerWallHour))
 	}
 	for _, r := range runs {
 		fmt.Fprintf(w, "Phase: %s; answer complete=%s; terminal=%s; terminal-to-exit=%s; characters=%s; effective characters/s=%s\n", phase(r), duration(r.Metrics.AnswerCompleteSeconds), duration(r.Metrics.TerminalReceiptSeconds), duration(r.Metrics.TerminalToExitSeconds), tokens(r.Metrics.OutputCharacters), number(r.Metrics.EffectiveCharactersPerSecond))
@@ -199,7 +209,7 @@ func HTML(w io.Writer, runs []telemetry.Run, plans ...Plan) error {
 	runs = normalized
 	ordered := append([]telemetry.Run(nil), runs...)
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].StartedAt.Before(ordered[j].StartedAt) })
-	t, err := template.New("report").Funcs(template.FuncMap{"count": count, "phase": phase, "policy": policy, "accounting": accounting, "number": number, "duration": duration, "setting": setting, "tokens": tokens, "success": success, "join": strings.Join}).Parse(page)
+	t, err := template.New("report").Funcs(template.FuncMap{"metric": metric, "metricDuration": metricDuration, "count": count, "phase": phase, "policy": policy, "accounting": accounting, "number": number, "duration": duration, "setting": setting, "tokens": tokens, "success": success, "join": strings.Join}).Parse(page)
 	if err != nil {
 		return err
 	}
@@ -217,7 +227,7 @@ const page = `<!doctype html>
 {{range .Reliability}}<tr><td>{{.Agent}} / {{.Case}}</td><td>{{.Experiment}}</td><td>{{count .Planned}} / {{.Attempts}} / {{count .Missing}}</td><td>{{number .CoverageRate}}</td><td>{{.Attempts}} / {{.Completed}}</td><td>{{.Passed}} / {{.Graded}}</td><td>{{number .SuccessRate}} / {{number .CompletionRate}}</td><td>{{.Unavailable}}</td><td>{{.Canceled}} / {{.Skipped}}</td><td>{{.Timeouts}}</td></tr>{{end}}
 </tbody></table></div><h2>Speed samples by metric and environment policy</h2><p class="intro">Wall times include graded failures and timeouts; unavailable/quota/preparation failures do not contribute speed samples. TTFA and effective throughput medians use all completed runs with available values, including incorrect answers. Passed-only medians separately require a passing grade. Percentiles use nearest rank. Success is pass / graded; ungraded runs remain unknown. Warmups are retained in history and excluded from aggregates. Experiments, TTFA timing bases, cache, isolation and permission policies are kept separate. IQR and min/max describe sample spread, not confidence intervals. Missing historical policies remain unspecified. Tool receipt intervals are not actual runtime; unsupported runtime remains unknown. Skipped and unavailable runs are ungraded. User config snapshots do not prove resolved or observed CLI settings.</p>
 <div class="table-wrap"><table><thead><tr><th scope="col">Agent</th><th scope="col">Case / experiment</th><th scope="col">Runs / completed</th><th scope="col">Pass / graded</th><th scope="col">Timeouts</th><th scope="col">Wall p50 / p95, s</th><th scope="col">TTFA p50, s</th><th scope="col">Effective output tok/s p50</th><th scope="col">Passed-only p50</th><th scope="col">Passed / wall hour</th></tr></thead><tbody>
-{{range .Groups}}<tr><td>{{.Agent}}</td><td>{{.Case}}<details><summary>Experiment</summary>{{.Experiment}}</details></td><td>{{.Runs}} / {{.Completed}}{{if lt .Completed 10}}<br>Small sample; descriptive only{{end}}</td><td>{{.Passed}} / {{.Graded}}</td><td>{{.Timeouts}}</td><td>{{number .WallP50}} / {{number .WallP95}}<br>IQR: {{number .WallP25}}–{{number .WallP75}}; min/max: {{number .WallMin}}–{{number .WallMax}}<br>Preparation p50: {{duration .PreparationP50}}<br>Cache: {{policy .GoCachePolicy}}; isolation: {{policy .IsolationPolicy}}<br>Permissions: {{policy .PermissionPolicy}}<br>Instructions: {{policy .InstructionsPolicy}}<br>Answer p50: {{number .AnswerCompleteP50}}; exit gap p50: {{number .ExitGapP50}}</td><td>{{number .TTFAP50}}<br>{{.TTFABasis}}</td><td>{{number .EffectiveTPSP50}}<br>{{accounting .OutputTokenAccounting}}<br>Characters/s p50: {{number .CharactersPerSecondP50}}</td><td>Samples: {{.PassedSamples}}<br>Wall, s: {{number .PassedWallP50}}<br>TTFA, s: {{number .PassedTTFAP50}}<br>Effective tok/s: {{number .PassedTPSP50}}<br>Characters/s: {{number .PassedCharactersP50}}</td><td>{{number .PassedPerWallHour}}</td></tr>{{else}}<tr><td colspan="10">No stored runs.</td></tr>{{end}}
+{{range .Groups}}<tr><td>{{.Agent}}</td><td>{{.Case}}<details><summary>Experiment</summary>{{.Experiment}}</details></td><td>{{.Runs}} / {{.Completed}}{{if lt .Completed 10}}<br>Small sample; descriptive only{{end}}</td><td>{{.Passed}} / {{.Graded}}</td><td>{{.Timeouts}}</td><td>{{metric .WallP50 .Counts.Wall}} / {{metric .WallP95 .Counts.Wall}}<br>IQR: {{metric .WallP25 .Counts.Wall}}–{{metric .WallP75 .Counts.Wall}}; min/max: {{metric .WallMin .Counts.Wall}}–{{metric .WallMax .Counts.Wall}}<br>Preparation p50: {{metricDuration .PreparationP50 .Counts.Preparation}}<br>Cache: {{policy .GoCachePolicy}}; isolation: {{policy .IsolationPolicy}}<br>Permissions: {{policy .PermissionPolicy}}<br>Instructions: {{policy .InstructionsPolicy}}<br>Answer p50: {{metric .AnswerCompleteP50 .Counts.AnswerComplete}}; exit gap p50: {{metric .ExitGapP50 .Counts.ExitGap}}</td><td>{{metric .TTFAP50 .Counts.TTFA}}<br>{{.TTFABasis}}</td><td>{{metric .EffectiveTPSP50 .Counts.OutputTPS}}<br>{{accounting .OutputTokenAccounting}}<br>Characters/s p50: {{metric .CharactersPerSecondP50 .Counts.Characters}}</td><td>Samples: {{.PassedSamples}}<br>Wall, s: {{metric .PassedWallP50 .PassedCounts.Wall}}<br>TTFA, s: {{metric .PassedTTFAP50 .PassedCounts.TTFA}}<br>Effective tok/s: {{metric .PassedTPSP50 .PassedCounts.OutputTPS}}<br>Characters/s: {{metric .PassedCharactersP50 .PassedCounts.Characters}}</td><td>{{metric .PassedPerWallHour .Counts.PassedPerWallHour}}</td></tr>{{else}}<tr><td colspan="10">No stored runs.</td></tr>{{end}}
 </tbody></table></div><h2>Run history</h2><p class="intro">UTC timestamps allow comparisons across experiments. Tool receipt intervals include harness buffering and do not establish execution duration. Raw artifacts provide the evidence for each run.</p>
 <div class="table-wrap"><table><thead><tr><th scope="col">Started (UTC)</th><th scope="col">Agent / case</th><th scope="col">State / grade</th><th scope="col">Wall, s</th><th scope="col">TTFA, s</th><th scope="col">Output tokens</th><th scope="col">Effective tok/s</th><th scope="col">Tool matched / started</th><th scope="col">Tool runtime mean / p95, s; receipt mean / p95</th><th scope="col">Evidence</th></tr></thead><tbody>
 {{range .Runs}}<tr><td>{{.StartedAt.Format "2006-01-02 15:04:05"}}</td><td>{{.Agent}} / {{.Case}}<br>{{.Model}}</td><td class="status">{{.Status}} / {{success .Success}}<br>{{phase .}}</td><td>{{printf "%.3f" .Metrics.WallSeconds}}<br>Answer complete: {{duration .Metrics.AnswerCompleteSeconds}}<br>Terminal: {{duration .Metrics.TerminalReceiptSeconds}}; exit gap: {{duration .Metrics.TerminalToExitSeconds}}<br>CLI-reported: {{duration .Metrics.ReportedDurationSeconds}}<br>{{.Metrics.ReportedDurationSource}}</td><td>{{number .Metrics.TTFASeconds}}<br>{{.Metrics.TTFABasis}}<br>Delta: {{number .Metrics.FirstTextDeltaSeconds}}; complete: {{number .Metrics.FirstCompleteMessageSeconds}}; tool: {{number .Metrics.FirstToolActionSeconds}}</td><td>{{tokens .Metrics.Usage.OutputTokens}}<br>{{accounting .Metrics.Usage.OutputTokenAccounting}}<br>Thinking: {{tokens .Metrics.Usage.ThinkingTokens}}; cache write: {{tokens .Metrics.Usage.CacheWriteTokens}}</td><td>{{number .Metrics.EffectiveOutputTPS}}<br>Characters: {{tokens .Metrics.OutputCharacters}}; characters/s: {{number .Metrics.EffectiveCharactersPerSecond}}</td><td>{{.Metrics.MatchedToolCalls}} / {{.Metrics.ToolCalls}}</td><td>{{number .Metrics.ToolLatencyMeanSeconds}} / {{number .Metrics.ToolLatencyP95Seconds}}<br>Receipt: {{duration .Metrics.ToolReceiptIntervalMeanSeconds}} / {{duration .Metrics.ToolReceiptIntervalP95Seconds}}<br>{{.Metrics.ToolTimingBasis}} / {{.Metrics.ToolTimingConfidence}}</td><td><details><summary>{{.ID}}</summary><p>Experiment: {{.ExperimentID}}</p><p>Commit: {{.Commit}}</p><p>Artifacts: <code>{{.ArtifactDir}}</code></p><p>Prepared patch baseline: {{.PatchBaseline}}</p>{{range .ArtifactErrors}}<p>Artifact capture error: {{.}}</p>{{end}}<p>{{.Error}}</p>{{with .Failure}}<p>Failure: {{.Category}} / {{.Code}}; scope={{.Scope}}; retryable={{.Retryable}}</p>{{end}}<p>Requested model: {{.Settings.RequestedModel}}; configured: {{setting .Settings.ConfiguredModel}}; observed: {{setting .Settings.ObservedModel}}</p><p>Requested effort: {{.Settings.RequestedReasoningEffort}}; configured: {{setting .Settings.ConfiguredReasoningEffort}}; observed: {{setting .Settings.ObservedReasoningEffort}}</p><p>Service tier requested: {{.Settings.RequestedServiceTier}}; configured: {{setting .Settings.ConfiguredServiceTier}}; observed: {{setting .Settings.ObservedServiceTier}}</p>{{range .Verification}}<p>Scoring {{.Layer}}: {{.Passed}}; {{.Error}}</p>{{end}}<p>Preparation: {{duration .Environment.PreparationSeconds}}; Go cache: {{policy .Environment.GoCachePolicy}}</p><p>Isolation: {{policy .Environment.IsolationPolicy}}; permissions: {{policy .Environment.PermissionPolicy}}; instructions: {{policy .Environment.WorkspaceInstructions}}</p><p>SSE receive interval: {{duration .Metrics.StreamReceiveSeconds}}; characters/s: {{number .Metrics.StreamReceiveCharactersPerSecond}}; {{.Metrics.StreamReceiveBasis}}</p><p>Config snapshot: {{.Settings.ConfigStatus}}</p><p>{{join .Metrics.Warnings "; "}}</p></details></td></tr>{{end}}
@@ -255,4 +265,13 @@ func phase(r telemetry.Run) string {
 		return "warmup"
 	}
 	return "measured"
+}
+
+func metric(v *float64, n int) string         { return metricSample(number(v), n) }
+func metricDuration(v *float64, n int) string { return metricSample(duration(v), n) }
+func metricSample(value string, n int) string {
+	if n > 0 && n < 10 {
+		return fmt.Sprintf("%s (n=%d; small sample)", value, n)
+	}
+	return fmt.Sprintf("%s (n=%d)", value, n)
 }

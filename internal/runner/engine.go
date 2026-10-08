@@ -149,6 +149,7 @@ func Execute(ctx context.Context, cfg benchmark.Config, root string, store *stor
 func executeMatrix(ctx context.Context, cfg benchmark.Config, result Result, store *storage.Store, progress io.Writer) (Result, error) {
 	start := time.Now()
 	dir, experiment := result.Directory, result.Manifest.ExperimentID
+	scoringGuard := func() error { return checkScoringProvenance(cfg, result.Manifest.Provenance) }
 	covered := map[string]bool{}
 	for _, r := range result.Runs {
 		covered[jobKey(r.Agent, r.Case, r.Repeat, r.Warmup)] = true
@@ -181,7 +182,7 @@ func executeMatrix(ctx context.Context, cfg benchmark.Config, result Result, sto
 				if reason != nil {
 					r, runErr = skippedRun(j.agent, j.task, j.repeat, experiment, dir, reason)
 				} else {
-					r, runErr = executeAttempt(ctx, j.agent, j.task, j.repeat, experiment, dir, j.warmup)
+					r, runErr = executeAttempt(ctx, j.agent, j.task, j.repeat, experiment, dir, j.warmup, scoringGuard)
 				}
 				r.Warmup = j.warmup
 				if runErr == nil {
@@ -286,7 +287,7 @@ func executeOne(parent context.Context, a benchmark.Agent, task benchmark.Case, 
 	return executeAttempt(parent, a, task, repeat, experiment, dir, false)
 }
 
-func executeAttempt(parent context.Context, a benchmark.Agent, task benchmark.Case, repeat int, experiment, dir string, warmup bool) (r telemetry.Run, err error) {
+func executeAttempt(parent context.Context, a benchmark.Agent, task benchmark.Case, repeat int, experiment, dir string, warmup bool, guards ...func() error) (r telemetry.Run, err error) {
 	id, err := newID()
 	if err != nil {
 		return r, err
@@ -306,6 +307,25 @@ func executeAttempt(parent context.Context, a benchmark.Agent, task benchmark.Ca
 			err = saveErr
 		}
 	}()
+	var scoringGuard func() error
+	if len(guards) > 0 {
+		scoringGuard = guards[0]
+	} else {
+		scoringGuard, err = standaloneScoringGuard(task)
+	}
+	scoringInvalid := func(checkErr error) {
+		r.Status, r.Success = "infrastructure_error", nil
+		r.Error = "Scoring dependency validation failed: " + checkErr.Error()
+		r.Failure = &telemetry.Failure{Category: "infrastructure", Code: "scoring_inputs_changed", Scope: "attempt", Message: r.Error}
+	}
+	if err != nil {
+		scoringInvalid(err)
+		return r, nil
+	}
+	if checkErr := scoringGuard(); checkErr != nil {
+		scoringInvalid(checkErr)
+		return r, nil
+	}
 	workdir, prepErr := os.MkdirTemp("", "agent-speed-bench-work-")
 	if prepErr != nil {
 		r.Error = prepErr.Error()
@@ -359,11 +379,6 @@ func executeAttempt(parent context.Context, a benchmark.Agent, task benchmark.Ca
 			if captureErr := retainPatch(captureCtx, workspace, r.ArtifactDir, task.RetainFiles, baseline); captureErr != nil {
 				r.ArtifactErrors = append(r.ArtifactErrors, captureErr.Error())
 			}
-		}
-		if len(r.ArtifactErrors) > 0 && r.Status == "completed" {
-			r.Status, r.Success = "infrastructure_error", nil
-			r.Error = "Submitted artifact capture failed"
-			r.Failure = &telemetry.Failure{Category: "infrastructure", Code: "artifact_capture", Scope: "attempt", Message: r.Error}
 		}
 	}()
 	env, environmentErr := prepareGoEnvironment(parent, task, workspace, r.ArtifactDir)
@@ -526,6 +541,10 @@ func executeAttempt(parent context.Context, a benchmark.Agent, task benchmark.Ca
 	if !task.Verify.HasChecks() {
 		return r, nil
 	}
+	if checkErr := scoringGuard(); checkErr != nil {
+		scoringInvalid(checkErr)
+		return r, nil
+	}
 	r.Error = task.Verify.CheckOutput(transcript.String())
 	pass := r.Error == ""
 	checks := append([]benchmark.Check(nil), task.Verify.CoreTests...)
@@ -549,6 +568,10 @@ func executeAttempt(parent context.Context, a benchmark.Agent, task benchmark.Ca
 		var locked lockedWriter
 		locked.w = f
 		for i, check := range checks {
+			if checkErr := scoringGuard(); checkErr != nil {
+				scoringInvalid(checkErr)
+				break
+			}
 			fmt.Fprintf(&locked, "Scoring layer: %s\n", layers[i])
 			vctx, vcancel := context.WithTimeout(parent, time.Duration(task.Verify.TimeoutSeconds)*time.Second)
 			graded := RunProcess(vctx, adapters.Command{Path: check.Command, Args: check.Args}, workspace, &locked, &locked)
@@ -562,12 +585,31 @@ func executeAttempt(parent context.Context, a benchmark.Agent, task benchmark.Ca
 				}
 			}
 			r.Verification = append(r.Verification, vr)
+			if errors.Is(graded.Err, context.Canceled) {
+				r.Status, r.Success = "canceled", nil
+				r.Error = "Verification canceled (" + layers[i] + "): " + vr.Error
+				r.Failure = &telemetry.Failure{Category: "verification", Code: "verification_canceled", Scope: "attempt", Message: r.Error}
+				break
+			}
+			if graded.Err != nil && graded.ExitCode == nil {
+				r.Status, r.Success = "infrastructure_error", nil
+				r.Error = "Verifier could not start (" + layers[i] + "): " + vr.Error
+				r.Failure = &telemetry.Failure{Category: "infrastructure", Code: "verifier_start", Scope: "attempt", Message: r.Error}
+				break
+			}
+			if checkErr := scoringGuard(); checkErr != nil {
+				scoringInvalid(checkErr)
+				break
+			}
 		}
 		if closeErr := f.Close(); closeErr != nil {
 			return r, closeErr
 		}
 	}
 
+	if ungradedFailure(r.Status) {
+		return r, nil
+	}
 	r.Success = &pass
 	if !pass {
 		if r.Error == "" {

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime/debug"
 	"strconv"
 
@@ -67,6 +68,16 @@ func provenance(cfg benchmark.Config) (Provenance, error) {
 	}
 	sum := sha256.Sum256(data)
 	p.ConfigSHA256 = hex.EncodeToString(sum[:])
+	scoring, err := scoringProvenance(cfg)
+	if err != nil {
+		return p, err
+	}
+	p.InputSHA256, p.VerifierSHA256 = scoring.InputSHA256, scoring.VerifierSHA256
+	return p, nil
+}
+
+func scoringProvenance(cfg benchmark.Config) (Provenance, error) {
+	p := Provenance{VerifierSHA256: map[string]string{}}
 	for _, task := range cfg.Cases {
 		for _, input := range task.Verify.Inputs {
 			if p.InputSHA256 == nil {
@@ -124,4 +135,46 @@ func fingerprintInput(root string, hashes map[string]string) error {
 		hashes[path], err = fileHash(path)
 		return err
 	})
+}
+
+func checkScoringProvenance(cfg benchmark.Config, expected Provenance) error {
+	current, err := scoringProvenance(cfg)
+	if err != nil {
+		return fmt.Errorf("could not validate scoring dependencies: %w", err)
+	}
+	if !reflect.DeepEqual(current.InputSHA256, expected.InputSHA256) || !reflect.DeepEqual(current.VerifierSHA256, expected.VerifierSHA256) {
+		return fmt.Errorf("scoring dependencies changed since experiment preparation")
+	}
+	return nil
+}
+
+// Standalone attempts also protect declared inputs; matrix attempts use the
+// experiment baseline and include direct verifier executables.
+func standaloneScoringGuard(task benchmark.Case) (func() error, error) {
+	snapshot := func() (map[string]string, error) {
+		var hashes map[string]string
+		for _, path := range task.Verify.Inputs {
+			if hashes == nil {
+				hashes = map[string]string{}
+			}
+			if err := fingerprintInput(path, hashes); err != nil {
+				return nil, err
+			}
+		}
+		return hashes, nil
+	}
+	expected, err := snapshot()
+	if err != nil {
+		return nil, err
+	}
+	return func() error {
+		current, err := snapshot()
+		if err != nil {
+			return err
+		}
+		if !reflect.DeepEqual(current, expected) {
+			return fmt.Errorf("declared scoring inputs changed since attempt preparation")
+		}
+		return nil
+	}, nil
 }

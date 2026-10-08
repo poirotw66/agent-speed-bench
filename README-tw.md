@@ -206,3 +206,17 @@ agentspeedbench version
 ```
 
 版本指令顯示來源 commit、dirty 狀態、commit 時間、Go 版本及平台；缺少 build metadata 時保持 `unknown`。Commit 時間不是編譯時間。Patch 保存改用私有 Git index，支援刪除、移出 index、重建與新增檔案，不修改 agent 的 index；必要的 retained source 缺少時仍另外記錄保存錯誤。
+
+## 評分中斷與 artifact 錯誤
+
+在 command verifier 執行期間取消，記錄為 `canceled`／未評分，停止後續評分層。Verifier 無法啟動時列為未評分的 `infrastructure_error`，代碼為 `verifier_start`；已啟動且回傳失敗 exit code 時仍算任務失敗。既有 verifier 期限政策保持已評分失敗。中斷前已完成的評分層證據保留。
+
+指定 artifact 保存失敗時，只加入 `artifact_errors`，不改寫原本狀態、評分或失敗原因，包括通過與未評分結果。正式工作含保存錯誤時，CLI 的 `run`／`resume` 仍以失敗 exit code 結束，並明確說明評分已保留；報告另列保存錯誤。歷史紀錄不改寫，也不推測恢復已遺失的評分。
+
+## 執行期間評分完整性與指標樣本數
+
+正式 `run`／`resume` 會以原始 manifest 為基準，在 agent 執行前、評分前，以及每層 command 評分前後，核對宣告的評分輸入及直接 verifier／快取準備執行檔雜湊。依賴修改、新增、移除或無法讀取時，列為未評分的 `infrastructure_error`，代碼為 `scoring_inputs_changed`，停止後續評分層；後續工作也會在呼叫 agent 前被阻擋。原始紀錄與已執行的評分層證據保留，不會每輪重新接受新的基準。
+
+這是邊界檢查，不是不可變的評分快照；不能保證發現兩次檢查之間改動後又還原的情況。未宣告依賴仍不涵蓋。雜湊檢查不計入 agent 程序 wall time。
+
+各彙總速度指標新增自己的有效樣本數 `n`，涵蓋 wall time、TTFA、有效 tokens/s、字元每秒、答案完成、退出間隔與準備時間；僅通過樣本也各自計數。缺少數值不計入，明確回報的零值仍有效，`n=0` 保持未知。各指標只有 1–9 筆時，逐項標示小樣本，即使整組已有十筆完成或通過紀錄。時間基準、計數定義與環境分組保持原有規則。

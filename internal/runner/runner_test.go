@@ -541,3 +541,197 @@ func TestRetainedFilesCannotEscapeWorkspace(t *testing.T) {
 		t.Fatal("escaped capture")
 	}
 }
+
+func TestVerifierStartupFailureIsUngradedAndStopsLaterChecks(t *testing.T) {
+	task := fixtureTask()
+	marker := filepath.Join(t.TempDir(), "later-check")
+	task.Verify = benchmark.Verify{TimeoutSeconds: 1, CoreTests: []benchmark.Check{{Command: filepath.Join(t.TempDir(), "missing-verifier")}}, RegressionTests: []benchmark.Check{{Command: "sh", Args: []string{"-c", `touch "$1"`, "fixture", marker}}}}
+	r, err := executeOne(context.Background(), benchmark.Agent{Name: "fixture", Adapter: "generic", Command: "sh", Args: []string{"-c", "printf Done"}}, task, 1, "test", t.TempDir())
+	if err != nil || r.Status != "infrastructure_error" || r.Success != nil || r.Failure == nil || r.Failure.Code != "verifier_start" || len(r.Verification) != 1 || r.Verification[0].ExitCode != nil {
+		t.Fatal(r, err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("later verifier executed", err)
+	}
+	assertSavedGrade(t, r)
+}
+
+func TestCancelDuringVerificationIsUngradedAndStopsLaterChecks(t *testing.T) {
+	root := t.TempDir()
+	marker, later := filepath.Join(root, "ready"), filepath.Join(root, "later")
+	task := fixtureTask()
+	task.Verify = benchmark.Verify{TimeoutSeconds: 30, CoreTests: []benchmark.Check{{Command: "sh", Args: []string{"-c", `touch "$1"; sleep 30`, "fixture", marker}}}, RegressionTests: []benchmark.Check{{Command: "sh", Args: []string{"-c", `touch "$1"`, "fixture", later}}}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ready := make(chan bool, 1)
+	go func() {
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		deadline := time.NewTimer(5 * time.Second)
+		defer deadline.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if _, err := os.Stat(marker); err == nil {
+					ready <- true
+					cancel()
+					return
+				}
+			case <-deadline.C:
+				ready <- false
+				cancel()
+				return
+			case <-ctx.Done():
+				ready <- false
+				return
+			}
+		}
+	}()
+	r, err := executeOne(ctx, benchmark.Agent{Name: "fixture", Adapter: "generic", Command: "sh", Args: []string{"-c", "printf Done"}}, task, 1, "test", root)
+	if !<-ready || err != nil || r.Status != "canceled" || r.Success != nil || r.Failure == nil || r.Failure.Code != "verification_canceled" || len(r.Verification) != 1 || r.Verification[0].Error != context.Canceled.Error() {
+		t.Fatal(r, err)
+	}
+	if _, err := os.Stat(later); !os.IsNotExist(err) {
+		t.Fatal("later check executed", err)
+	}
+	assertSavedGrade(t, r)
+}
+
+func TestArtifactCaptureFailurePreservesPassedFailedAndUngradedResults(t *testing.T) {
+	for _, grade := range []string{"passed", "failed", "ungraded"} {
+		t.Run(grade, func(t *testing.T) {
+			task := fixtureTask()
+			task.RetainFiles = []string{"missing-source.txt"}
+			switch grade {
+			case "passed":
+				task.Verify = benchmark.Verify{OutputContains: "Done"}
+			case "failed":
+				task.Verify = benchmark.Verify{OutputContains: "Expected"}
+			case "ungraded":
+				task.Verify = benchmark.Verify{}
+			}
+			r, err := executeOne(context.Background(), benchmark.Agent{Name: "fixture", Adapter: "generic", Command: "sh", Args: []string{"-c", "printf Done"}}, task, 1, "test", t.TempDir())
+			if err != nil || r.Status != "completed" || len(r.ArtifactErrors) != 1 {
+				t.Fatal(r, err)
+			}
+			if grade == "ungraded" {
+				if r.Success != nil {
+					t.Fatal(r)
+				}
+			} else if r.Success == nil || *r.Success != (grade == "passed") {
+				t.Fatal(r)
+			}
+			if grade == "failed" {
+				if r.Failure == nil || r.Failure.Code != "assertion_failed" || r.Error == "" {
+					t.Fatal("grade evidence replaced", r)
+				}
+			} else if r.Failure != nil || r.Error != "" {
+				t.Fatal("capture replaced primary result", r)
+			}
+			assertSavedGrade(t, r)
+		})
+	}
+}
+
+func assertSavedGrade(t *testing.T, r telemetry.Run) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(r.ArtifactDir, "run.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved telemetry.Run
+	if err := json.Unmarshal(data, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.Status != r.Status || (saved.Success == nil) != (r.Success == nil) || (saved.Success != nil && *saved.Success != *r.Success) || len(saved.ArtifactErrors) != len(r.ArtifactErrors) {
+		t.Fatal("saved result differs", saved, r)
+	}
+}
+
+func TestChangedScoringInputsPreventVerification(t *testing.T) {
+	for _, action := range []string{"modify", "add", "remove"} {
+		t.Run(action, func(t *testing.T) {
+			root := t.TempDir()
+			inputs := filepath.Join(root, "inputs")
+			if err := os.Mkdir(inputs, 0700); err != nil {
+				t.Fatal(err)
+			}
+			file := filepath.Join(inputs, "trusted.txt")
+			if err := os.WriteFile(file, []byte("original"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			marker := filepath.Join(root, "verifier-ran")
+			task := fixtureTask()
+			task.Verify = benchmark.Verify{Inputs: []string{inputs}, Command: "sh", Args: []string{"-c", `touch "$1"`, "fixture", marker}, TimeoutSeconds: 2}
+			script := `printf changed > "$1"; printf Done`
+			target := file
+			if action == "add" {
+				target = filepath.Join(inputs, "extra.txt")
+			}
+			if action == "remove" {
+				script = `rm "$1"; printf Done`
+			}
+			r, err := executeOne(context.Background(), benchmark.Agent{Name: "fixture", Adapter: "generic", Command: "sh", Args: []string{"-c", script, "fixture", target}}, task, 1, "test", root)
+			if err != nil || r.Status != "infrastructure_error" || r.Success != nil || r.Failure == nil || r.Failure.Code != "scoring_inputs_changed" || len(r.Verification) != 0 {
+				t.Fatal(r, err)
+			}
+			if _, err := os.Stat(marker); !os.IsNotExist(err) {
+				t.Fatal("changed verifier executed", err)
+			}
+			assertSavedGrade(t, r)
+		})
+	}
+}
+
+func TestChangedScoringInputsDuringLayerStopLaterChecks(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "trusted.txt")
+	marker := filepath.Join(root, "later")
+	if err := os.WriteFile(input, []byte("original"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	task := fixtureTask()
+	task.Verify = benchmark.Verify{Inputs: []string{input}, TimeoutSeconds: 2, CoreTests: []benchmark.Check{{Command: "sh", Args: []string{"-c", `printf changed > "$1"`, "fixture", input}}}, RegressionTests: []benchmark.Check{{Command: "sh", Args: []string{"-c", `touch "$1"`, "fixture", marker}}}}
+	r, err := executeOne(context.Background(), benchmark.Agent{Name: "fixture", Adapter: "generic", Command: "sh", Args: []string{"-c", "printf Done"}}, task, 1, "test", root)
+	if err != nil || r.Success != nil || r.Failure == nil || r.Failure.Code != "scoring_inputs_changed" || len(r.Verification) != 1 || !r.Verification[0].Passed {
+		t.Fatal(r, err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("later scoring layer executed", err)
+	}
+	assertSavedGrade(t, r)
+}
+
+func TestMatrixScoringBaselinePreventsCallsAfterVerifierChanges(t *testing.T) {
+	root := t.TempDir()
+	verifier := filepath.Join(root, "verify.sh")
+	calls := filepath.Join(root, "calls")
+	if err := os.WriteFile(verifier, []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	task := fixtureTask()
+	task.Verify = benchmark.Verify{Command: verifier, TimeoutSeconds: 2}
+	cfg := benchmark.Config{Name: "scoring-change", Repeats: 2, Jobs: 1, TimeoutSeconds: 2, Cases: []benchmark.Case{task}, Agents: []benchmark.Agent{{Name: "fixture", Adapter: "generic", Command: "sh", Args: []string{"-c", `printf x >> "$1"; printf '#changed\n' >> "$2"; printf Done`, "fixture", calls, verifier}}}}
+	store, err := storage.Open(filepath.Join(root, "runs.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	result, err := Execute(context.Background(), cfg, root, store, io.Discard)
+	if err != nil || len(result.Runs) != 2 {
+		t.Fatal(result, err)
+	}
+	for _, r := range result.Runs {
+		if r.Success != nil || r.Status != "infrastructure_error" || r.Failure == nil || r.Failure.Code != "scoring_inputs_changed" {
+			t.Fatal(r)
+		}
+	}
+	data, err := os.ReadFile(calls)
+	if err != nil || string(data) != "x" {
+		t.Fatal("agent called after dependencies changed", string(data), err)
+	}
+	rows, err := store.Runs(result.Manifest.ExperimentID)
+	if err != nil || len(rows) != 2 || rows[0].Success != nil || rows[1].Success != nil {
+		t.Fatal(rows, err)
+	}
+}
