@@ -188,6 +188,21 @@ agentspeedbench resume -db agentspeedbench.db runs/<experiment>
 
 Schema 3 manifest 記錄 harness binary SHA-256、可取得的來源 commit／dirty 狀態、解析後設定雜湊、CLI binary 雜湊／版本及直接 verifier／快取準備執行檔雜湊。續跑要求版本一致並取得實驗鎖，將僅存在 artifact 的完成紀錄補入 SQLite，不覆寫既有證據。只補尚未記錄的工作；缺少的暖身先執行。已記錄的失敗、取消與跳過不重跑；重試或改設定需建立新實驗。舊版 manifest 不支援此續跑指令；升級前應保留原 binary。
 
-`state: complete` 代表所有排程位置都有紀錄，不代表全部通過。`elapsed_seconds` 累積各次執行時間，不是跨中斷的日曆時間。雜湊不涵蓋完整主機環境、verifier arguments 引用的輔助檔案、wrapper 依賴或服務端快取，不能宣稱環境完全相同。
+`state: complete` 代表所有排程位置都有紀錄，不代表全部通過。`elapsed_seconds` 累積各次執行時間，不是跨中斷的日曆時間。雜湊不涵蓋完整主機環境、未宣告、由 verifier arguments 引用的輔助檔案、wrapper 依賴或服務端快取，不能宣稱環境完全相同。
 
 Responses HTTP 錯誤只從有大小上限的回應中保留已知機器代碼，區分額度、認證、模型及限流；未知或格式錯誤使用 `http_error`。Relay 不保存 provider 錯誤訊息與本文，並區分 transport 錯誤與呼叫端取消。沒有自動重試；付費 API 實測仍待指定條件。
+
+## 評分依賴與比較覆蓋率
+
+`verify.inputs` 明確列出可信檔案或目錄，路徑相對於 YAML。Runner 記錄各檔案 SHA-256；修改、新增或刪除後會拒絕續跑。拒絕符號連結、特殊檔案、超過 8 MiB 的檔案及超過 10,000 個檔案的集合。內建工程 profiles 已宣告外部評分目錄，涵蓋案例設定與測試。未宣告依賴與 wrapper runtime 不會自動推測。
+
+速度表同時呈現全部完成答案，以及僅驗證通過樣本的數量、wall／TTFA／有效 tokens/s／字元每秒中位數。錯誤答案仍列入完成樣本，但不會讓通過樣本的速度變快；未知評分也排除。時間基準、計數定義與環境仍各自分組。
+
+可靠性表新增計畫／已記錄／缺少正式工作及覆蓋率。從 artifact 旁相符的 manifest 取得計畫；缺少或無效時保持未知。完成率仍以已記錄工作為分母，成功率仍以已評分工作為分母。未派出任何工作的 agent 也能顯示；完全沒有紀錄時可明確指定 manifest：
+
+```sh
+agentspeedbench report -db agentspeedbench.db -experiment <id> -manifest runs/<id>/manifest.json -out runs/coverage.html
+agentspeedbench version
+```
+
+版本指令顯示來源 commit、dirty 狀態、commit 時間、Go 版本及平台；缺少 build metadata 時保持 `unknown`。Commit 時間不是編譯時間。Patch 保存改用私有 Git index，支援刪除、移出 index、重建與新增檔案，不修改 agent 的 index；必要的 retained source 缺少時仍另外記錄保存錯誤。

@@ -43,6 +43,7 @@ type Check struct {
 }
 
 type Verify struct {
+	Inputs          []string         `yaml:"inputs,omitempty" json:"inputs,omitempty"`
 	CoreTests       []Check          `yaml:"core_tests,omitempty" json:"core_tests,omitempty"`
 	RegressionTests []Check          `yaml:"regression_tests,omitempty" json:"regression_tests,omitempty"`
 	Command         string           `yaml:"command,omitempty" json:"command,omitempty"`
@@ -138,6 +139,14 @@ func Load(path string) (Config, error) {
 	}
 	for i := range cfg.Cases {
 		c := &cfg.Cases[i]
+		for j, input := range c.Verify.Inputs {
+			if strings.TrimSpace(input) == "" {
+				return cfg, fmt.Errorf("case %s: verifier input path is required", c.Name)
+			}
+			if !filepath.IsAbs(input) {
+				c.Verify.Inputs[j] = filepath.Join(base, input)
+			}
+		}
 		if c.TimeoutSeconds == 0 {
 			c.TimeoutSeconds = cfg.TimeoutSeconds
 		}
@@ -264,6 +273,11 @@ func (c Config) Validate() error {
 		for path := range task.Files {
 			if !SafePath(path) {
 				return fmt.Errorf("unsafe seed path: %q", path)
+			}
+		}
+		for _, input := range task.Verify.Inputs {
+			if strings.TrimSpace(input) == "" {
+				return fmt.Errorf("case %s: verifier input path is required", task.Name)
 			}
 		}
 		for _, checks := range [][]Check{task.Verify.CoreTests, task.Verify.RegressionTests} {

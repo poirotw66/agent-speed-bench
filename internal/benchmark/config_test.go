@@ -169,3 +169,13 @@ func TestNewMeasurementConfigsAndInvalidControls(t *testing.T) {
 		}
 	}
 }
+
+func TestVerifierInputPathsResolveAndRejectEmpty(t *testing.T) {
+	cfg, err := loadText(t, validConfig+"    verify:\n      inputs: [trusted-tests]\n")
+	if err != nil || !filepath.IsAbs(cfg.Cases[0].Verify.Inputs[0]) || filepath.Base(cfg.Cases[0].Verify.Inputs[0]) != "trusted-tests" {
+		t.Fatal(cfg, err)
+	}
+	if _, err := loadText(t, validConfig+"    verify:\n      inputs: ['']\n"); err == nil {
+		t.Fatal("empty input accepted")
+	}
+}

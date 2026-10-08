@@ -316,6 +316,21 @@ agentspeedbench resume -db agentspeedbench.db runs/<experiment>
 
 Schema 3 manifests record the harness binary SHA-256, build revision/dirty flag when available, resolved configuration hash, CLI binary hashes/versions, and direct verifier/cache-preparation executable hashes. Resume requires matching provenance and an exclusive experiment lock; it reconciles artifact-only completed records into SQLite without replacing existing evidence. It schedules only missing logical jobs, including missing warmups before measured jobs. Already recorded failures, cancellations and skips are not retried. Use a new experiment to retry them or change binaries/settings. Older manifests cannot resume through this command. Preserve the original binary to recover an experiment after upgrading.
 
-Manifest `state: complete` means all planned slots have records, not that every attempt passed. `elapsed_seconds` accumulates active invocation time across resumes rather than continuous calendar time. Hashes do not fingerprint the entire host environment, helper assets invoked by verifier arguments, wrapper dependencies, or service-side caches. Version matching prevents known local changes from silently mixing; it does not establish complete environment equivalence.
+Manifest `state: complete` means all planned slots have records, not that every attempt passed. `elapsed_seconds` accumulates active invocation time across resumes rather than continuous calendar time. Hashes do not fingerprint the entire host environment, undeclared helper assets invoked by verifier arguments, wrapper dependencies, or service-side caches. Version matching prevents known local changes from silently mixing; it does not establish complete environment equivalence.
 
 Responses HTTP failures retain only recognized machine codes (including quota, authentication, model and rate-limit codes) from a bounded error body. Unknown or malformed bodies become `http_error`; provider messages and bodies are not persisted by the relay. Transport failures are distinct from caller cancellation. No automatic retry or paid API validation is implied.
+
+## Scoring inputs and comparison coverage
+
+`verify.inputs` declares trusted files or directories relative to the YAML file. The runner records SHA-256 hashes of their regular files and rejects resume after content changes, additions or removals. Symlinks, special files, files over 8 MiB and input sets over 10,000 files are rejected. Built-in engineering profiles declare their external scoring directories, including case specifications and tests. Undeclared helper dependencies and wrapper runtimes are not inferred automatically.
+
+Speed tables show both all completed answers and a passed-only subset (sample count and median wall time, TTFA, effective tokens/s and characters/s). A process that finishes with an incorrect answer remains in the completed subset, but cannot make passed-only results look faster. Unknown grades are excluded from passed-only results; timing/accounting/environment groups remain separate.
+
+Reliability tables now show planned / recorded / missing measured jobs and coverage. Plans come from matching manifests next to run artifacts; missing or invalid manifests leave coverage unknown. Completion and success rates retain their existing recorded-attempt and graded denominators. A plan can include agents with no dispatched records. To report an experiment with zero records, supply its manifest explicitly:
+
+```sh
+agentspeedbench report -db agentspeedbench.db -experiment <id> -manifest runs/<id>/manifest.json -out runs/coverage.html
+agentspeedbench version
+```
+
+The version command includes the build's source commit, dirty state, commit timestamp, Go version and platform. Unavailable build metadata remains `unknown`; commit time is not compilation time. Patch capture uses a private Git index to preserve baseline-relative deletions, index removal, recreated files and additions without changing the agent's index. Source capture still reports a missing required retained source separately.

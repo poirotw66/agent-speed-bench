@@ -137,3 +137,51 @@ func TestResumeRejectsChangedDirectVerifierBeforeScheduling(t *testing.T) {
 		t.Fatal("evidence changed", rows, err)
 	}
 }
+
+func TestResumeRejectsChangedExternalScoringInputs(t *testing.T) {
+	root := t.TempDir()
+	inputs := filepath.Join(root, "tests")
+	if err := os.Mkdir(inputs, 0700); err != nil {
+		t.Fatal(err)
+	}
+	fixture := filepath.Join(inputs, "trusted.txt")
+	if err := os.WriteFile(fixture, []byte("original"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := storage.Open(filepath.Join(root, "runs.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	task := fixtureTask()
+	task.Verify.Inputs = []string{inputs}
+	cfg := benchmark.Config{Name: "input-guard", Repeats: 1, Jobs: 1, TimeoutSeconds: 2, Cases: []benchmark.Case{task}, Agents: []benchmark.Agent{{Name: "fixture", Adapter: "generic", Command: "sh", Args: []string{"-c", "printf Done"}}}}
+	first, err := Execute(context.Background(), cfg, root, store, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range []string{"modify", "add", "remove"} {
+		if err := os.WriteFile(fixture, []byte("original"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		switch action {
+		case "modify":
+			err = os.WriteFile(fixture, []byte("changed"), 0600)
+		case "add":
+			err = os.WriteFile(filepath.Join(inputs, "extra.txt"), []byte("extra"), 0600)
+		case "remove":
+			err = os.Remove(fixture)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Resume(context.Background(), first.Directory, store, io.Discard); err == nil {
+			t.Fatal("changed scoring inputs accepted", action)
+		}
+		if action == "add" {
+			if err := os.Remove(filepath.Join(inputs, "extra.txt")); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}

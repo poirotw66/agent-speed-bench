@@ -26,6 +26,7 @@ cases:
       fresh_history: true
     retain_files: [pkg/commands/git_commands/github.go]
     verify:
+      inputs: [real-go]
       timeout_seconds: 180
       core_tests:
         - command: ../scripts/verify-lazygit.py

@@ -4,9 +4,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime/debug"
 	"strconv"
 
@@ -14,6 +17,7 @@ import (
 )
 
 type Provenance struct {
+	InputSHA256    map[string]string `json:"input_sha256,omitempty"`
 	BinarySHA256   string            `json:"binary_sha256"`
 	SourceRevision string            `json:"source_revision"`
 	SourceModified *bool             `json:"source_modified"`
@@ -64,6 +68,14 @@ func provenance(cfg benchmark.Config) (Provenance, error) {
 	sum := sha256.Sum256(data)
 	p.ConfigSHA256 = hex.EncodeToString(sum[:])
 	for _, task := range cfg.Cases {
+		for _, input := range task.Verify.Inputs {
+			if p.InputSHA256 == nil {
+				p.InputSHA256 = map[string]string{}
+			}
+			if err := fingerprintInput(input, p.InputSHA256); err != nil {
+				return p, err
+			}
+		}
 		checks := append([]benchmark.Check(nil), task.Verify.CoreTests...)
 		checks = append(checks, task.Verify.RegressionTests...)
 		checks = append(checks, task.CacheWarmup...)
@@ -85,4 +97,31 @@ func provenance(cfg benchmark.Config) (Provenance, error) {
 		}
 	}
 	return p, nil
+}
+
+// Explicit dependencies only: do not infer arbitrary command argument semantics.
+func fingerprintInput(root string, hashes map[string]string) error {
+	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() || info.Size() > maxLineBytes {
+			return fmt.Errorf("verifier input must be a bounded regular file: %s", path)
+		}
+		if _, exists := hashes[path]; exists {
+			return nil
+		}
+		if len(hashes) >= 10000 {
+			return fmt.Errorf("too many verifier input files")
+		}
+		hashes[path], err = fileHash(path)
+		return err
+	})
 }

@@ -42,7 +42,7 @@ func run(ctx context.Context, args []string) error {
 		usage()
 		return nil
 	case "version", "--version":
-		fmt.Println("AgentSpeedBench 0.1.0-dev")
+		fmt.Println(versionString())
 		return nil
 	case "__demo-agent":
 		return demoAgent()
@@ -87,10 +87,10 @@ func run(ctx context.Context, args []string) error {
 			result, runErr = runner.Execute(ctx, cfg, root, s, os.Stdout)
 		}
 		if result.Directory != "" {
-			if err := writeReport(filepath.Join(result.Directory, "report.html"), result.Runs); err != nil {
+			if err := writeReport(filepath.Join(result.Directory, "report.html"), result.Runs, manifestPlans(result.Manifest)...); err != nil {
 				return err
 			}
-			report.Text(os.Stdout, result.Runs)
+			report.Text(os.Stdout, result.Runs, manifestPlans(result.Manifest)...)
 			fmt.Println("Artifacts:", result.Directory)
 		}
 		if runErr != nil {
@@ -128,6 +128,7 @@ func run(ctx context.Context, args []string) error {
 		dbPath := fs.String("db", "agentspeedbench.db", "SQLite database")
 		experiment := fs.String("experiment", "", "Filter experiment ID; empty includes history")
 		out := fs.String("out", "report.html", "HTML report path")
+		manifestPath := fs.String("manifest", "", "Explicit experiment manifest for coverage, including zero records")
 		if err := fs.Parse(args[1:]); err != nil {
 			if errors.Is(err, flag.ErrHelp) {
 				return nil
@@ -149,13 +150,27 @@ func run(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		if len(runs) == 0 {
+		plans := reportPlans(runs)
+		if *manifestPath != "" {
+			plans, err = explicitReportPlans(*manifestPath, *experiment)
+			if err != nil {
+				return err
+			}
+			if *experiment == "" {
+				for _, r := range runs {
+					if len(plans) > 0 && r.ExperimentID != plans[0].Experiment {
+						return errors.New("explicit manifest requires a matching experiment filter")
+					}
+				}
+			}
+		}
+		if len(runs) == 0 && len(plans) == 0 {
 			return errors.New("no runs match the requested experiment")
 		}
-		if err := writeReport(*out, runs); err != nil {
+		if err := writeReport(*out, runs, plans...); err != nil {
 			return err
 		}
-		report.Text(os.Stdout, runs)
+		report.Text(os.Stdout, runs, plans...)
 		fmt.Println("Report:", *out)
 		return nil
 	default:
@@ -176,7 +191,10 @@ Start offline: agentspeedbench run benchmarks/demo.yaml
 Real runs invoke installed CLIs and can consume the configured account's quota.
 `)
 }
-func writeReport(path string, runs []telemetry.Run) error {
+func writeReport(path string, runs []telemetry.Run, plans ...report.Plan) error {
+	if len(plans) == 0 {
+		plans = reportPlans(runs)
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
@@ -184,7 +202,7 @@ func writeReport(path string, runs []telemetry.Run) error {
 	if err != nil {
 		return err
 	}
-	writeErr := report.HTML(f, runs)
+	writeErr := report.HTML(f, runs, plans...)
 	closeErr := f.Close()
 	if writeErr != nil {
 		return writeErr

@@ -46,6 +46,7 @@ cases:
 
         func Clamp(x, lo, hi int) int { if x < lo { return lo }; if x > hi { return lo }; return x }
     verify:
+      inputs: [go-cases]
       timeout_seconds: 60
       core_tests:
         - command: ../scripts/verify-go-case.py
@@ -63,6 +64,7 @@ cases:
 
         func Unique(xs []int) []int { seen:=map[int]bool{}; out:=[]int{}; for _,x:=range xs { if x == 0 {continue}; if !seen[x] {seen[x]=true;out=append(out,x)} }; return out }
     verify:
+      inputs: [go-cases]
       timeout_seconds: 60
       core_tests:
         - command: ../scripts/verify-go-case.py
@@ -80,6 +82,7 @@ cases:
 
         func SumInclusive(lo, hi int) int { sum:=0; for x:=lo;x<hi;x++ {sum+=x}; return sum }
     verify:
+      inputs: [go-cases]
       timeout_seconds: 60
       core_tests:
         - command: ../scripts/verify-go-case.py

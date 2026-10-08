@@ -86,28 +86,33 @@ func (b *patchBuffer) Write(p []byte) (int, error) {
 func retainPatch(ctx context.Context, workspace, artifacts string, paths []string, baseline string) error {
 	bounded, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	args := []string{"--no-pager", "--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", "--binary", baseline, "--"}
-	args = append(args, paths...)
-	var patch patchBuffer
-	var diagnostics limitedBuffer
-	result := RunProcess(bounded, adapters.Command{Path: "git", Args: args}, workspace, &patch, &diagnostics)
-	if result.Err != nil {
-		return fmt.Errorf("submitted patch capture failed: %w", result.Err)
+	indexDir, err := os.MkdirTemp("", "agentspeedbench-patch-index-")
+	if err != nil {
+		return err
 	}
-	for _, path := range paths {
-		// Paths present in the index are covered by the baseline diff, including
-		// files committed by the agent. Truly untracked additions need --no-index.
-		tracked, err := git(bounded, workspace, "--literal-pathspecs", "ls-files", "--", path)
-		if err != nil {
-			return err
+	defer os.RemoveAll(indexDir)
+	env := []string{"GIT_INDEX_FILE=" + filepath.Join(indexDir, "index")}
+	var diagnostics limitedBuffer
+	run := func(args []string, output io.Writer) error {
+		result := RunProcess(bounded, adapters.Command{Path: "git", Args: args, Env: env}, workspace, output, &diagnostics)
+		if result.Err != nil {
+			return fmt.Errorf("submitted patch capture failed: %w", result.Err)
 		}
-		if tracked != "" {
-			continue
-		}
-		addition := RunProcess(bounded, adapters.Command{Path: "git", Args: []string{"--no-pager", "--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", "--binary", "--no-index", "--", "/dev/null", path}}, workspace, &patch, &diagnostics)
-		if addition.ExitCode == nil || (*addition.ExitCode != 0 && *addition.ExitCode != 1) {
-			return fmt.Errorf("new submitted file patch capture failed")
-		}
+		return nil
+	}
+	// A private index compares current files with the original baseline, regardless
+	// of agent commits, index removal, staged deletions or newly created files.
+	if err := run([]string{"read-tree", baseline}, io.Discard); err != nil {
+		return err
+	}
+	args := append([]string{"--literal-pathspecs", "add", "-A", "-f", "--"}, paths...)
+	if err := run(args, io.Discard); err != nil {
+		return err
+	}
+	var patch patchBuffer
+	args = append([]string{"--no-pager", "--literal-pathspecs", "diff", "--cached", "--no-ext-diff", "--no-textconv", "--binary", baseline, "--"}, paths...)
+	if err := run(args, &patch); err != nil {
+		return err
 	}
 	return os.WriteFile(filepath.Join(artifacts, "candidate.patch.txt"), []byte(patch.String()), 0600)
 }

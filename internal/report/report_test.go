@@ -161,3 +161,32 @@ func TestReliabilityKeepsTheDenominatorAcrossMetricGroups(t *testing.T) {
 		t.Fatal(err, out.String())
 	}
 }
+
+func TestPassedOnlySpeedExcludesWrongAndUngradedAnswers(t *testing.T) {
+	passed, failed := true, false
+	a, b, c := 10.0, 100.0, 200.0
+	runs := []telemetry.Run{
+		{ExperimentID: "e", Agent: "a", Case: "c", Status: "completed", Success: &passed, Metrics: telemetry.Metrics{SchemaVersion: 2, WallSeconds: 10, EffectiveOutputTPS: &a}},
+		{ExperimentID: "e", Agent: "a", Case: "c", Status: "completed", Success: &failed, Metrics: telemetry.Metrics{SchemaVersion: 2, WallSeconds: 1, EffectiveOutputTPS: &b}},
+		{ExperimentID: "e", Agent: "a", Case: "c", Status: "completed", Metrics: telemetry.Metrics{SchemaVersion: 2, WallSeconds: 1, EffectiveOutputTPS: &c}},
+	}
+	groups := Aggregate(runs)
+	if len(groups) != 1 || groups[0].PassedSamples != 1 || *groups[0].PassedTPSP50 != 10 || *groups[0].EffectiveTPSP50 != 100 {
+		t.Fatal(groups)
+	}
+}
+
+func TestCoverageIncludesUndispatchedJobsAndMissingManifests(t *testing.T) {
+	runs := []telemetry.Run{{ExperimentID: "e", Agent: "a", Case: "c", Status: "canceled"}}
+	groups := ReliabilityTotals(runs, Plan{Experiment: "e", Agent: "a", Case: "c", Repeats: 3}, Plan{Experiment: "e", Agent: "b", Case: "c", Repeats: 3})
+	if len(groups) != 2 || *groups[0].Missing != 2 || *groups[1].Missing != 3 || *groups[1].CoverageRate != 0 || groups[1].CompletionRate != nil {
+		t.Fatal(groups)
+	}
+	if ReliabilityTotals(runs)[0].Planned != nil {
+		t.Fatal("missing manifest guessed")
+	}
+	var html bytes.Buffer
+	if err := HTML(&html, runs, Plan{Experiment: "e", Agent: "a", Case: "c", Repeats: 3}); err != nil || !strings.Contains(html.String(), "3 / 1 / 2") {
+		t.Fatal(err, html.String())
+	}
+}

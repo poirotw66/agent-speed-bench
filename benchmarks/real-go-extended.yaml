@@ -41,6 +41,7 @@ cases:
       - pkg/gui/controllers/helpers/commits_helper.go
       - pkg/gui/controllers/helpers/working_tree_helper.go
     verify:
+      inputs: [real-go]
       timeout_seconds: 300
       core_tests:
         - command: ../scripts/verify-real-go.py
@@ -68,6 +69,7 @@ cases:
       dependencies and do not access the network. Change only that source file.
     retain_files: [pkg/commands/git_commands/branch_loader.go]
     verify:
+      inputs: [real-go]
       timeout_seconds: 180
       core_tests:
         - command: ../scripts/verify-real-go.py

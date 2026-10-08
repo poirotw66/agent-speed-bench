@@ -81,3 +81,64 @@ func TestCaptureSurvivesFailureTimeoutCancellationAndAgentCommit(t *testing.T) {
 		})
 	}
 }
+
+func TestCapturedPatchReplaysDeletionIndexRemovalAndRecreation(t *testing.T) {
+	for _, action := range []string{"delete", "untrack", "recreate"} {
+		t.Run(action, func(t *testing.T) {
+			ctx := context.Background()
+			repo, artifacts := t.TempDir(), t.TempDir()
+			source := filepath.Join(repo, "source.txt")
+			if err := os.WriteFile(source, []byte("original\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			for _, args := range [][]string{{"init", "--quiet", "--template="}, {"add", "source.txt"}, {"-c", "user.name=Fixture", "-c", "user.email=fixture@example.org", "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "base"}} {
+				if _, err := git(ctx, repo, args...); err != nil {
+					t.Fatal(err)
+				}
+			}
+			baseline, err := git(ctx, repo, "rev-parse", "HEAD")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if action == "untrack" {
+				_, err = git(ctx, repo, "rm", "--cached", "source.txt")
+			} else {
+				_, err = git(ctx, repo, "rm", "source.txt")
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if action != "delete" {
+				if err := os.WriteFile(source, []byte("replacement\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			indexBefore, err := git(ctx, repo, "ls-files", "--stage")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := retainPatch(ctx, repo, artifacts, []string{"source.txt"}, baseline); err != nil {
+				t.Fatal(err)
+			}
+			indexAfter, err := git(ctx, repo, "ls-files", "--stage")
+			if err != nil || indexBefore != indexAfter {
+				t.Fatal("capture changed agent index", err)
+			}
+			replay := filepath.Join(t.TempDir(), "replay")
+			if _, err := git(ctx, "", "clone", "--quiet", repo, replay); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := git(ctx, replay, "apply", filepath.Join(artifacts, "candidate.patch.txt")); err != nil {
+				t.Fatal("patch does not replay", err)
+			}
+			data, err := os.ReadFile(filepath.Join(replay, "source.txt"))
+			if action == "delete" {
+				if !os.IsNotExist(err) {
+					t.Fatal("deleted file restored", err)
+				}
+			} else if err != nil || string(data) != "replacement\n" {
+				t.Fatal(string(data), err)
+			}
+		})
+	}
+}
