@@ -38,6 +38,29 @@ func TestStoreRoundTripPreservesUnknownAndFilters(t *testing.T) {
 	}
 }
 
+func TestReconcileDoesNotReplaceExistingEvidence(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "runs.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	r := telemetry.Run{ID: "immutable", ExperimentID: "e", Status: "canceled"}
+	if err := s.Reconcile(r); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Reconcile(r); err != nil {
+		t.Fatal(err)
+	}
+	r.Status = "completed"
+	if err := s.Reconcile(r); err == nil {
+		t.Fatal("stored evidence replaced")
+	}
+	rows, _ := s.Runs("e")
+	if len(rows) != 1 || rows[0].Status != "canceled" {
+		t.Fatal(rows)
+	}
+}
+
 func TestNewTelemetryRoundTrip(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "runs.db"))
 	if err != nil {

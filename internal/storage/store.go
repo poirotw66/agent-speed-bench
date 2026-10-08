@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 
 	"github.com/poirotw66/agent-speed-bench/internal/telemetry"
 	_ "modernc.org/sqlite"
@@ -53,6 +54,26 @@ func (s *Store) Save(r telemetry.Run) error {
 	}
 	_, err = s.db.Exec(`INSERT INTO runs(id,experiment_id,agent,case_name,started_at,status,success,wall_seconds,output_tokens,effective_output_tps,ttfa_seconds,record_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, r.ID, r.ExperimentID, r.Agent, r.Case, r.StartedAt.Format("2006-01-02T15:04:05.999999999Z07:00"), r.Status, r.Success, r.Metrics.WallSeconds, r.Metrics.Usage.OutputTokens, r.Metrics.EffectiveOutputTPS, r.Metrics.TTFASeconds, string(b))
 	return err
+}
+
+// Reconcile imports a missing artifact record without replacing stored evidence.
+func (s *Store) Reconcile(r telemetry.Run) error {
+	var raw string
+	err := s.db.QueryRow("SELECT record_json FROM runs WHERE id=?", r.ID).Scan(&raw)
+	if err == sql.ErrNoRows {
+		return s.Save(r)
+	}
+	if err != nil {
+		return err
+	}
+	var stored telemetry.Run
+	if err := json.Unmarshal([]byte(raw), &stored); err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(stored, r) {
+		return fmt.Errorf("record %s disagrees with immutable stored evidence", r.ID)
+	}
+	return nil
 }
 func (s *Store) Runs(experiment string) ([]telemetry.Run, error) {
 	query := "SELECT record_json FROM runs"

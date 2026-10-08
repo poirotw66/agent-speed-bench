@@ -46,11 +46,14 @@ func run(ctx context.Context, args []string) error {
 		return nil
 	case "__demo-agent":
 		return demoAgent()
-	case "run":
-		fs := flag.NewFlagSet("run", flag.ContinueOnError)
-		root := fs.String("out", "runs", "Artifact root")
+	case "run", "resume":
+		fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
+		root, jobs := "runs", 0
+		if args[0] == "run" {
+			fs.StringVar(&root, "out", "runs", "Artifact root")
+			fs.IntVar(&jobs, "jobs", 0, "Override parallel jobs (default: configuration)")
+		}
 		dbPath := fs.String("db", "agentspeedbench.db", "SQLite database")
-		jobs := fs.Int("jobs", 0, "Override parallel jobs (default: configuration)")
 		if err := fs.Parse(args[1:]); err != nil {
 			if errors.Is(err, flag.ErrHelp) {
 				return nil
@@ -58,21 +61,31 @@ func run(ctx context.Context, args []string) error {
 			return err
 		}
 		if fs.NArg() != 1 {
-			return errors.New("usage: agentspeedbench run [-out runs] [-db agentspeedbench.db] [-jobs 1] benchmark.yaml")
+			return fmt.Errorf("usage: agentspeedbench %s [-db agentspeedbench.db] configuration-or-experiment-directory", args[0])
 		}
-		cfg, err := benchmark.Load(fs.Arg(0))
-		if err != nil {
-			return err
-		}
-		if *jobs != 0 {
-			cfg.Jobs = *jobs
+		var cfg benchmark.Config
+		if args[0] == "run" {
+			var err error
+			cfg, err = benchmark.Load(fs.Arg(0))
+			if err != nil {
+				return err
+			}
+			if jobs != 0 {
+				cfg.Jobs = jobs
+			}
 		}
 		s, err := storage.Open(*dbPath)
 		if err != nil {
 			return err
 		}
 		defer s.Close()
-		result, runErr := runner.Execute(ctx, cfg, *root, s, os.Stdout)
+		var result runner.Result
+		var runErr error
+		if args[0] == "resume" {
+			result, runErr = runner.Resume(ctx, fs.Arg(0), s, os.Stdout)
+		} else {
+			result, runErr = runner.Execute(ctx, cfg, root, s, os.Stdout)
+		}
 		if result.Directory != "" {
 			if err := writeReport(filepath.Join(result.Directory, "report.html"), result.Runs); err != nil {
 				return err
@@ -88,7 +101,7 @@ func run(ctx context.Context, args []string) error {
 				continue
 			}
 			if r.Status != "completed" || (r.Success != nil && !*r.Success) {
-				return errors.New("one or more benchmark attempts failed; inspect report.html")
+				return errors.New("one or more benchmark attempts did not complete or pass; inspect report.html")
 			}
 		}
 		return nil
@@ -154,6 +167,7 @@ func usage() {
 
 Usage:
   agentspeedbench run [-out runs] [-db agentspeedbench.db] [-jobs 1] benchmark.yaml
+  agentspeedbench resume [-db agentspeedbench.db] experiment-directory
   agentspeedbench doctor benchmark.yaml
   agentspeedbench report [-db agentspeedbench.db] [-experiment ID] [-out report.html]
   agentspeedbench version

@@ -108,7 +108,7 @@ func TestPatchIncludesTrackedAndNewSubmittedFiles(t *testing.T) {
 	if err := retainFiles(workspace, artifacts, []string{"tracked.go", "candidate.go"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := retainPatch(ctx, workspace, artifacts, []string{"tracked.go", "candidate.go"}); err != nil {
+	if err := retainPatch(ctx, workspace, artifacts, []string{"tracked.go", "candidate.go"}, "HEAD"); err != nil {
 		t.Fatal(err)
 	}
 	patch, err := os.ReadFile(filepath.Join(artifacts, "candidate.patch.txt"))

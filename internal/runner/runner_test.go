@@ -271,11 +271,11 @@ func TestRepoSnapshotIgnoresDirtyWorkingTree(t *testing.T) {
 	}
 }
 
-func TestCanceledRunRemainsARecordedFailure(t *testing.T) {
+func TestCanceledRunRemainsRecordedAndUngraded(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	r, err := executeOne(ctx, benchmark.Agent{Name: "a", Adapter: "generic", Command: "sh", Args: []string{"-c", "printf Done"}}, fixtureTask(), 1, "test", t.TempDir())
-	if err != nil || r.Status == "completed" || r.Success == nil || *r.Success || r.StartedAt.IsZero() {
+	if err != nil || r.Status != "canceled" || r.Success != nil || r.StartedAt.IsZero() {
 		t.Fatal(r, err)
 	}
 	var saved telemetry.Run
@@ -286,7 +286,7 @@ func TestCanceledRunRemainsARecordedFailure(t *testing.T) {
 	if err := json.Unmarshal(data, &saved); err != nil {
 		t.Fatal(err)
 	}
-	if saved.Success == nil || *saved.Success {
+	if saved.Success != nil {
 		t.Fatal(saved)
 	}
 }

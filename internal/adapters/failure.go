@@ -54,12 +54,17 @@ func ClassifyFailure(data []byte) *telemetry.Failure {
 	msg := strings.ToLower(f.Message)
 	switch {
 	case telemetry.IsUsageLimit(f.Code, f.Message):
-		f.Category, f.Code, f.Scope, f.Retryable = "quota", "usage_limit_reached", "agent", false
+		f.Category, f.Scope, f.Retryable = "quota", "agent", false
+		if f.Code == "unknown" {
+			f.Code = "usage_limit_reached"
+		}
+	case telemetry.IsConnectionFailure(f.Code, f.Message):
+		f.Category, f.Code, f.Scope, f.Retryable = "network", "connection_error", "attempt", true
 	case f.Code == "model_not_found" || f.Code == "model_not_supported" || (strings.Contains(msg, "model") && (strings.Contains(msg, "not supported") || strings.Contains(msg, "does not exist"))):
 		f.Category, f.Code, f.Scope, f.Retryable = "configuration", "model_not_supported", "agent", false
 	case (f.HTTPStatus != nil && *f.HTTPStatus == 401) || f.Code == "invalid_api_key" || f.Code == "authentication_error" || strings.Contains(msg, "not logged in") || strings.Contains(msg, "authentication required") || strings.Contains(msg, "please log in") || strings.Contains(msg, "run codex login"):
 		f.Category, f.Scope, f.Retryable = "authentication", "agent", false
-	case (f.HTTPStatus != nil && (*f.HTTPStatus == 429 || *f.HTTPStatus >= 500)):
+	case f.Code == "rate_limit_exceeded" || f.Code == "slow_down" || f.Code == "server_error" || (f.HTTPStatus != nil && (*f.HTTPStatus == 429 || *f.HTTPStatus >= 500)):
 		f.Category = "service"
 	}
 	return f

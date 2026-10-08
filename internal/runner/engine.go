@@ -25,6 +25,9 @@ import (
 )
 
 type Manifest struct {
+	State             string                        `json:"state,omitempty"`
+	Resumes           int                           `json:"resumes"`
+	Provenance        Provenance                    `json:"provenance"`
 	WarmupStartedRuns int                           `json:"warmup_started_runs"`
 	WarmupSkippedRuns int                           `json:"warmup_skipped_runs"`
 	SchemaVersion     int                           `json:"schema_version"`
@@ -43,6 +46,7 @@ type Manifest struct {
 	Agents            []AgentInfo                   `json:"agents"`
 }
 type AgentInfo struct {
+	BinarySHA256 string                `json:"binary_sha256"`
 	Name         string                `json:"name"`
 	Executable   string                `json:"executable"`
 	Version      string                `json:"version"`
@@ -91,6 +95,10 @@ func Preflight(ctx context.Context, cfg benchmark.Config) ([]AgentInfo, error) {
 				info.Version = strings.TrimSpace(out.String())
 			}
 		}
+		info.BinarySHA256, err = fileHash(path)
+		if err != nil {
+			return nil, err
+		}
 		infos = append(infos, info)
 	}
 	return infos, nil
@@ -122,9 +130,28 @@ func Execute(ctx context.Context, cfg benchmark.Config, root string, store *stor
 	}
 	start := time.Now()
 	result.Directory = dir
-	result.Manifest = Manifest{SchemaVersion: 2, WarmupRuns: cfg.WarmupRepeats * len(cfg.Agents) * len(cfg.Cases), PlannedRuns: cfg.Repeats * len(cfg.Agents) * len(cfg.Cases), ExperimentID: experiment, StartedAt: start.UTC(), Platform: runtime.GOOS + "/" + runtime.GOARCH, GoVersion: runtime.Version(), Config: cfg, Agents: infos}
+	result.Manifest = Manifest{SchemaVersion: 3, State: "running", WarmupRuns: cfg.WarmupRepeats * len(cfg.Agents) * len(cfg.Cases), PlannedRuns: cfg.Repeats * len(cfg.Agents) * len(cfg.Cases), ExperimentID: experiment, StartedAt: start.UTC(), Platform: runtime.GOOS + "/" + runtime.GOARCH, GoVersion: runtime.Version(), Config: cfg, Agents: infos}
+	result.Manifest.Provenance, err = provenance(cfg)
+	if err != nil {
+		return result, err
+	}
+	release, err := claimExperiment(dir)
+	if err != nil {
+		return result, err
+	}
+	defer release()
 	if err := storage.WriteJSON(filepath.Join(dir, "manifest.json"), result.Manifest); err != nil {
 		return result, err
+	}
+	return executeMatrix(ctx, cfg, result, store, progress)
+}
+
+func executeMatrix(ctx context.Context, cfg benchmark.Config, result Result, store *storage.Store, progress io.Writer) (Result, error) {
+	start := time.Now()
+	dir, experiment := result.Directory, result.Manifest.ExperimentID
+	covered := map[string]bool{}
+	for _, r := range result.Runs {
+		covered[jobKey(r.Agent, r.Case, r.Repeat, r.Warmup)] = true
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -139,7 +166,10 @@ func Execute(ctx context.Context, cfg benchmark.Config, root string, store *stor
 	var mu sync.Mutex
 	var warmupWG sync.WaitGroup
 	var firstErr error
-	stopped := map[string]*telemetry.Failure{}
+	stopped := result.Manifest.StoppedAgents
+	if stopped == nil {
+		stopped = map[string]*telemetry.Failure{}
+	}
 	for range cfg.Jobs {
 		wg.Go(func() {
 			for j := range jobs {
@@ -151,7 +181,7 @@ func Execute(ctx context.Context, cfg benchmark.Config, root string, store *stor
 				if reason != nil {
 					r, runErr = skippedRun(j.agent, j.task, j.repeat, experiment, dir, reason)
 				} else {
-					r, runErr = executeOne(ctx, j.agent, j.task, j.repeat, experiment, dir)
+					r, runErr = executeAttempt(ctx, j.agent, j.task, j.repeat, experiment, dir, j.warmup)
 				}
 				r.Warmup = j.warmup
 				if runErr == nil {
@@ -213,6 +243,9 @@ dispatch:
 		for _, task := range cfg.Cases {
 			for i := range cfg.Agents {
 				a := cfg.Agents[(i+repeat-1)%len(cfg.Agents)]
+				if covered[jobKey(a.Name, task.Name, repeat, warmup)] {
+					continue
+				}
 				if warmup {
 					warmupWG.Add(1)
 				}
@@ -232,7 +265,11 @@ dispatch:
 	sort.Slice(result.Runs, func(i, j int) bool { return result.Runs[i].ID < result.Runs[j].ID })
 	result.Manifest.StoppedAgents = stopped
 	result.Manifest.FinishedAt = time.Now().UTC()
-	result.Manifest.ElapsedSeconds = time.Since(start).Seconds()
+	result.Manifest.ElapsedSeconds += time.Since(start).Seconds()
+	result.Manifest.State = "complete"
+	if ctx.Err() != nil || firstErr != nil {
+		result.Manifest.State = "interrupted"
+	}
 	if err := storage.WriteJSON(filepath.Join(dir, "manifest.json"), result.Manifest); firstErr == nil {
 		firstErr = err
 	}
@@ -245,12 +282,16 @@ dispatch:
 	return result, ctx.Err()
 }
 
-func executeOne(parent context.Context, a benchmark.Agent, task benchmark.Case, repeat int, experiment, dir string) (r telemetry.Run, err error) {
+func executeOne(parent context.Context, a benchmark.Agent, task benchmark.Case, repeat int, experiment, dir string) (telemetry.Run, error) {
+	return executeAttempt(parent, a, task, repeat, experiment, dir, false)
+}
+
+func executeAttempt(parent context.Context, a benchmark.Agent, task benchmark.Case, repeat int, experiment, dir string, warmup bool) (r telemetry.Run, err error) {
 	id, err := newID()
 	if err != nil {
 		return r, err
 	}
-	r = telemetry.Run{ID: id, ExperimentID: experiment, Case: task.Name, Agent: a.Name, Adapter: a.Adapter, Model: a.Model, Settings: snapshotSettings(a), Repeat: repeat, StartedAt: time.Now().UTC(), Status: "error", Metrics: telemetry.Metrics{SchemaVersion: 2, TTFABasis: "unobserved", ToolTimingBasis: "runner_receipt", ToolTimingConfidence: "unverified"}, ArtifactDir: filepath.Join(dir, id)}
+	r = telemetry.Run{Warmup: warmup, ID: id, ExperimentID: experiment, Case: task.Name, Agent: a.Name, Adapter: a.Adapter, Model: a.Model, Settings: snapshotSettings(a), Repeat: repeat, StartedAt: time.Now().UTC(), Status: "error", Metrics: telemetry.Metrics{SchemaVersion: 2, TTFABasis: "unobserved", ToolTimingBasis: "runner_receipt", ToolTimingConfidence: "unverified"}, ArtifactDir: filepath.Join(dir, id)}
 	r.Environment.PermissionPolicy = permissionPolicy(a.Adapter)
 	if err := os.Mkdir(r.ArtifactDir, 0700); err != nil {
 		return r, err
@@ -268,7 +309,9 @@ func executeOne(parent context.Context, a benchmark.Agent, task benchmark.Case, 
 	workdir, prepErr := os.MkdirTemp("", "agent-speed-bench-work-")
 	if prepErr != nil {
 		r.Error = prepErr.Error()
-		if !errors.Is(prepErr, context.Canceled) {
+		if errors.Is(prepErr, context.Canceled) {
+			r.Status = "canceled"
+		} else {
 			r.Status = "infrastructure_error"
 			r.Failure = &telemetry.Failure{Category: "infrastructure", Code: "workspace_preparation", Scope: "attempt", Message: r.Error}
 		}
@@ -286,13 +329,43 @@ func executeOne(parent context.Context, a benchmark.Agent, task benchmark.Case, 
 	prepCancel()
 	if prepErr != nil {
 		r.Error = prepErr.Error()
-		if !errors.Is(prepErr, context.Canceled) {
+		if errors.Is(prepErr, context.Canceled) {
+			r.Status = "canceled"
+		} else {
 			r.Status = "infrastructure_error"
 			r.Failure = &telemetry.Failure{Category: "infrastructure", Code: "workspace_preparation", Scope: "attempt", Message: r.Error}
 		}
 		return r, nil
 	}
 	r.Commit = commit
+	baseline := ""
+	if task.RetainPatch {
+		baseline, err = git(parent, workspace, "rev-parse", "HEAD")
+		if err != nil {
+			r.Status = "infrastructure_error"
+			r.Error = "Could not record prepared patch baseline"
+			return r, nil
+		}
+	}
+	r.PatchBaseline = baseline
+	defer func() {
+		// Preserve submissions before removing the workspace, even after cancellation.
+		captureCtx, captureCancel := context.WithTimeout(context.WithoutCancel(parent), 10*time.Second)
+		defer captureCancel()
+		if captureErr := retainFiles(workspace, r.ArtifactDir, task.RetainFiles); captureErr != nil {
+			r.ArtifactErrors = append(r.ArtifactErrors, captureErr.Error())
+		}
+		if task.RetainPatch {
+			if captureErr := retainPatch(captureCtx, workspace, r.ArtifactDir, task.RetainFiles, baseline); captureErr != nil {
+				r.ArtifactErrors = append(r.ArtifactErrors, captureErr.Error())
+			}
+		}
+		if len(r.ArtifactErrors) > 0 && r.Status == "completed" {
+			r.Status, r.Success = "infrastructure_error", nil
+			r.Error = "Submitted artifact capture failed"
+			r.Failure = &telemetry.Failure{Category: "infrastructure", Code: "artifact_capture", Scope: "attempt", Message: r.Error}
+		}
+	}()
 	env, environmentErr := prepareGoEnvironment(parent, task, workspace, r.ArtifactDir)
 	if environmentErr == nil {
 		var homeEnv []string
@@ -380,11 +453,11 @@ func executeOne(parent context.Context, a benchmark.Agent, task benchmark.Case, 
 		c.failure = c.diagnosticFailure
 	}
 	r.Failure = c.failure
-	if r.Failure != nil {
+	if r.Failure != nil && r.Status != "canceled" {
 		r.Error = r.Failure.Message
 		if r.Failure.Scope == "agent" {
 			r.Status = "agent_unavailable"
-		} else if r.Failure.Category == "service" {
+		} else if r.Failure.Category == "service" || r.Failure.Category == "network" {
 			r.Status = "service_error"
 		}
 	}
@@ -411,14 +484,6 @@ func executeOne(parent context.Context, a benchmark.Agent, task benchmark.Case, 
 	if r.Failure == nil && (r.Status == "infrastructure_error" || r.Status == "telemetry_error") {
 		r.Failure = &telemetry.Failure{Category: "infrastructure", Code: r.Status, Scope: "attempt", Retryable: true, Message: r.Error}
 	}
-	if ungradedFailure(r.Status) {
-		return r, nil
-	}
-	if r.Status != "completed" {
-		failed := false
-		r.Success = &failed
-		return r, nil
-	}
 	var transcript strings.Builder
 	final := ""
 	finalSeen := false
@@ -435,28 +500,28 @@ func executeOne(parent context.Context, a benchmark.Agent, task benchmark.Case, 
 		transcript.Reset()
 		transcript.WriteString(final)
 	}
-	characters := int64(utf8.RuneCountInString(transcript.String()))
-	r.Metrics.OutputCharacters = &characters
-	if r.Metrics.WallSeconds > 0 {
-		rate := float64(characters) / r.Metrics.WallSeconds
-		r.Metrics.EffectiveCharactersPerSecond = &rate
+	if r.Status == "completed" {
+		characters := int64(utf8.RuneCountInString(transcript.String()))
+		r.Metrics.OutputCharacters = &characters
+		if r.Metrics.WallSeconds > 0 {
+			rate := float64(characters) / r.Metrics.WallSeconds
+			r.Metrics.EffectiveCharactersPerSecond = &rate
+		}
 	}
-	if err := os.WriteFile(filepath.Join(r.ArtifactDir, "assistant.txt"), []byte(transcript.String()), 0600); err != nil {
+	transcriptName := "assistant.txt"
+	if r.Status != "completed" {
+		transcriptName = "assistant.partial.txt"
+	}
+	if err := os.WriteFile(filepath.Join(r.ArtifactDir, transcriptName), []byte(transcript.String()), 0600); err != nil {
 		return r, err
 	}
-	if retainErr := retainFiles(workspace, r.ArtifactDir, task.RetainFiles); retainErr != nil {
-		r.Status = "infrastructure_error"
-		r.Error = retainErr.Error()
-		r.Failure = &telemetry.Failure{Category: "infrastructure", Code: "artifact_capture", Scope: "attempt", Message: r.Error}
+	if ungradedFailure(r.Status) {
 		return r, nil
 	}
-	if task.RetainPatch {
-		if captureErr := retainPatch(parent, workspace, r.ArtifactDir, task.RetainFiles); captureErr != nil {
-			r.Status = "infrastructure_error"
-			r.Error = captureErr.Error()
-			r.Failure = &telemetry.Failure{Category: "infrastructure", Code: "artifact_capture", Scope: "attempt", Message: r.Error}
-			return r, nil
-		}
+	if r.Status != "completed" {
+		failed := false
+		r.Success = &failed
+		return r, nil
 	}
 	if !task.Verify.HasChecks() {
 		return r, nil
@@ -562,5 +627,5 @@ func skippedRun(a benchmark.Agent, task benchmark.Case, repeat int, experiment, 
 }
 
 func ungradedFailure(status string) bool {
-	return status == "agent_unavailable" || status == "service_error" || status == "infrastructure_error" || status == "telemetry_error" || status == "skipped"
+	return status == "canceled" || status == "agent_unavailable" || status == "service_error" || status == "infrastructure_error" || status == "telemetry_error" || status == "skipped"
 }

@@ -83,10 +83,10 @@ func (b *patchBuffer) Write(p []byte) (int, error) {
 	return b.Builder.Write(p)
 }
 
-func retainPatch(ctx context.Context, workspace, artifacts string, paths []string) error {
+func retainPatch(ctx context.Context, workspace, artifacts string, paths []string, baseline string) error {
 	bounded, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	args := []string{"--no-pager", "--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", "--binary", "HEAD", "--"}
+	args := []string{"--no-pager", "--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", "--binary", baseline, "--"}
 	args = append(args, paths...)
 	var patch patchBuffer
 	var diagnostics limitedBuffer
@@ -95,8 +95,13 @@ func retainPatch(ctx context.Context, workspace, artifacts string, paths []strin
 		return fmt.Errorf("submitted patch capture failed: %w", result.Err)
 	}
 	for _, path := range paths {
-		tracked := RunProcess(bounded, adapters.Command{Path: "git", Args: []string{"--literal-pathspecs", "ls-files", "--error-unmatch", "--", path}}, workspace, &limitedBuffer{}, &limitedBuffer{})
-		if tracked.Err == nil {
+		// Paths present in the index are covered by the baseline diff, including
+		// files committed by the agent. Truly untracked additions need --no-index.
+		tracked, err := git(bounded, workspace, "--literal-pathspecs", "ls-files", "--", path)
+		if err != nil {
+			return err
+		}
+		if tracked != "" {
 			continue
 		}
 		addition := RunProcess(bounded, adapters.Command{Path: "git", Args: []string{"--no-pager", "--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", "--binary", "--no-index", "--", "/dev/null", path}}, workspace, &patch, &diagnostics)

@@ -109,26 +109,28 @@ type VerificationResult struct {
 }
 
 type Run struct {
-	Environment  Environment          `json:"environment"`
-	Warmup       bool                 `json:"warmup,omitempty"`
-	Verification []VerificationResult `json:"verification,omitempty"`
-	ID           string               `json:"id"`
-	ExperimentID string               `json:"experiment_id"`
-	Case         string               `json:"case"`
-	Agent        string               `json:"agent"`
-	Adapter      string               `json:"adapter"`
-	Model        string               `json:"model,omitempty"`
-	Repeat       int                  `json:"repeat"`
-	StartedAt    time.Time            `json:"started_at"`
-	Status       string               `json:"status"`
-	ExitCode     *int                 `json:"exit_code"`
-	Success      *bool                `json:"success"`
-	Error        string               `json:"error,omitempty"`
-	Failure      *Failure             `json:"failure,omitempty"`
-	Settings     Settings             `json:"settings"`
-	Commit       string               `json:"commit,omitempty"`
-	ArtifactDir  string               `json:"artifact_dir"`
-	Metrics      Metrics              `json:"metrics"`
+	PatchBaseline  string               `json:"patch_baseline,omitempty"`
+	ArtifactErrors []string             `json:"artifact_errors,omitempty"`
+	Environment    Environment          `json:"environment"`
+	Warmup         bool                 `json:"warmup,omitempty"`
+	Verification   []VerificationResult `json:"verification,omitempty"`
+	ID             string               `json:"id"`
+	ExperimentID   string               `json:"experiment_id"`
+	Case           string               `json:"case"`
+	Agent          string               `json:"agent"`
+	Adapter        string               `json:"adapter"`
+	Model          string               `json:"model,omitempty"`
+	Repeat         int                  `json:"repeat"`
+	StartedAt      time.Time            `json:"started_at"`
+	Status         string               `json:"status"`
+	ExitCode       *int                 `json:"exit_code"`
+	Success        *bool                `json:"success"`
+	Error          string               `json:"error,omitempty"`
+	Failure        *Failure             `json:"failure,omitempty"`
+	Settings       Settings             `json:"settings"`
+	Commit         string               `json:"commit,omitempty"`
+	ArtifactDir    string               `json:"artifact_dir"`
+	Metrics        Metrics              `json:"metrics"`
 }
 
 type Environment struct {

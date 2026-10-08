@@ -154,7 +154,7 @@ python3 scripts/verify-real-go.py whitespace regression ATTEMPT_DIR/candidate --
 
 `retain_patch: true` 需搭配 repo 與 retain_files；保存允許提交路徑的 `candidate.patch.txt`（包含新檔），以及 SHA-256／大小清單 `source_manifest.json`。重新評分驗證 hash，重建可信任原始版本與相依套件，不採用 candidate 測試。分享前需檢查提交原始碼內容。
 
-報告依快取、指令、設定隔離與權限政策分組，顯示準備時間中位數、wall time 四分位數及範圍；這些不是信賴區間。舊紀錄若明確包含額度錯誤，報告會解讀為無法使用／未評分，不改寫原始資料。額度與基礎設施錯誤不納入速度樣本。agy 明確回報 headless 權限自動拒絕時，即使 exit code 是零也列為無法使用／未評分；參見[官方 headless 權限說明](https://www.antigravity.google/docs/cli/headless/)。Manifest 每筆紀錄後以原子替換更新；中斷的實驗仍是不完整實驗，不會自動續跑。
+報告依快取、指令、設定隔離與權限政策分組，顯示準備時間中位數、wall time 四分位數及範圍；這些不是信賴區間。舊紀錄若明確包含額度錯誤，報告會解讀為無法使用／未評分，不改寫原始資料。額度與基礎設施錯誤不納入速度樣本。agy 明確回報 headless 權限自動拒絕時，即使 exit code 是零也列為無法使用／未評分；參見[官方 headless 權限說明](https://www.antigravity.google/docs/cli/headless/)。Manifest 每筆紀錄後以原子替換更新；中斷的實驗需明確執行 `resume`。
 
 ## API 串流
 
@@ -175,3 +175,19 @@ api:
 第一至最後 SSE delta 的接收區間／Unicode 字元率不計入第一個 chunk 的字元，仍受緩衝與 relay 影響，不能當作解碼速度或 model-active TPS。原生 output token 可能包含推理，另標示 accounting；缺少 usage 或只有一個 delta 時保持未知。正式 API 實測仍待指定供應商、模型、認證環境變數與費用上限；本次尚未呼叫正式 API。[官方串流文件](https://developers.openai.com/api/docs/guides/streaming-responses)。
 
 目前本機證據：修正 Cursor 認證重用後，七組隔離短輸出 smoke 皆成功；中斷的正式矩陣中 agy 完成 50 筆呼叫，沒有鑰匙圈／認證錯誤。受控快取 owner 案例通過兩層評分，兩個新增案例通過 base-fails/fixed-passes 驗證。這些驗證支持測試流程正常，尚不是完整速度排名，也不代表系統鑰匙圈已修復。
+
+## 可靠性、失敗證據與續跑
+
+可靠性表依實驗、agent、案例統計，不受 TTFA 或 token 計數分組影響。總紀錄數包含正式測量的成功、失敗、不可用、取消及跳過，排除暖身；完成率為完成數／總紀錄數，成功率為通過數／已評分數。速度表仍保留各自的時間基準與環境分組。明確連線錯誤列為服務錯誤／未評分；使用者取消也未評分，任務逾時仍算期限內未完成。歷史報告可重新解讀已有證據，不改寫原始紀錄；缺少診斷時不推測原因。
+
+失敗、逾時及取消也會在清理 workspace 前，於獨立且有時間限制的清理 context 中保留指定原始碼與 patch。`patch_baseline` 使用 agent 執行前的 commit，包含 agent 自行 commit 的修改。未完成答案保存在 `assistant.partial.txt`；保留失敗記在 `artifact_errors`，不蓋掉原本錯誤。程序突然被強制終止仍可能無法完成保存。
+
+```sh
+agentspeedbench resume -db agentspeedbench.db runs/<experiment>
+```
+
+Schema 3 manifest 記錄 harness binary SHA-256、可取得的來源 commit／dirty 狀態、解析後設定雜湊、CLI binary 雜湊／版本及直接 verifier／快取準備執行檔雜湊。續跑要求版本一致並取得實驗鎖，將僅存在 artifact 的完成紀錄補入 SQLite，不覆寫既有證據。只補尚未記錄的工作；缺少的暖身先執行。已記錄的失敗、取消與跳過不重跑；重試或改設定需建立新實驗。舊版 manifest 不支援此續跑指令；升級前應保留原 binary。
+
+`state: complete` 代表所有排程位置都有紀錄，不代表全部通過。`elapsed_seconds` 累積各次執行時間，不是跨中斷的日曆時間。雜湊不涵蓋完整主機環境、verifier arguments 引用的輔助檔案、wrapper 依賴或服務端快取，不能宣稱環境完全相同。
+
+Responses HTTP 錯誤只從有大小上限的回應中保留已知機器代碼，區分額度、認證、模型及限流；未知或格式錯誤使用 `http_error`。Relay 不保存 provider 錯誤訊息與本文，並區分 transport 錯誤與呼叫端取消。沒有自動重試；付費 API 實測仍待指定條件。

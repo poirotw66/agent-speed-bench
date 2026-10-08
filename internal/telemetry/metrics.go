@@ -147,9 +147,21 @@ func add(dst **int64, src *int64) {
 
 // ReportRun reinterprets legacy receipt intervals without rewriting stored evidence.
 func ReportRun(r Run) Run {
-	if r.Failure != nil && IsUsageLimit(r.Failure.Code, r.Failure.Message) {
+	if r.Status == "canceled" {
+		r.Success = nil
+	}
+	if r.Status != "canceled" && r.Failure != nil && !IsUsageLimit(r.Failure.Code, r.Failure.Message) && IsConnectionFailure(r.Failure.Code, r.Failure.Message) {
 		failure := *r.Failure
-		failure.Category, failure.Code, failure.Scope, failure.Retryable = "quota", "usage_limit_reached", "agent", false
+		failure.Category, failure.Code, failure.Scope, failure.Retryable = "network", "connection_error", "attempt", true
+		r.Failure = &failure
+		r.Status, r.Success = "service_error", nil
+	}
+	if r.Status != "canceled" && r.Failure != nil && IsUsageLimit(r.Failure.Code, r.Failure.Message) {
+		failure := *r.Failure
+		failure.Category, failure.Scope, failure.Retryable = "quota", "agent", false
+		if failure.Code == "" || failure.Code == "unknown" {
+			failure.Code = "usage_limit_reached"
+		}
 		r.Failure = &failure
 		r.Status, r.Success = "agent_unavailable", nil
 	}
@@ -167,7 +179,25 @@ func ReportRun(r Run) Run {
 	return r
 }
 
-func IsUsageLimit(code, message string) bool {
+// Match explicit transport diagnostics only, never arbitrary assistant text.
+func IsConnectionFailure(code, message string) bool {
+	if code == "connection_error" || code == "network_error" {
+		return true
+	}
 	message = strings.ToLower(message)
-	return code == "insufficient_quota" || code == "usage_limit_reached" || strings.Contains(message, "hit your usage limit") || strings.Contains(message, "usage limit reached")
+	for _, diagnostic := range []string{"connection reset by peer", "stream disconnected before completion", "network issue connecting to the server", "responses transport failed"} {
+		if strings.Contains(message, diagnostic) {
+			return true
+		}
+	}
+	return false
+}
+
+func IsUsageLimit(code, message string) bool {
+	switch code {
+	case "insufficient_quota", "usage_limit_reached", "credit_balance_exhausted", "organization_spend_limit_exceeded", "project_spend_limit_exceeded", "organization_usage_limit_exceeded", "usage_limit_exceeded":
+		return true
+	}
+	message = strings.ToLower(message)
+	return strings.Contains(message, "hit your usage limit") || strings.Contains(message, "usage limit reached")
 }

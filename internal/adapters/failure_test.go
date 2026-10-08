@@ -1,6 +1,7 @@
 package adapters
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -42,7 +43,7 @@ func TestReasoningEffortPassedAsCLIOverride(t *testing.T) {
 func TestQuotaIsUngradedAndStopsFutureCalls(t *testing.T) {
 	for _, raw := range []string{`{"message":"You have hit your usage limit. Try again later."}`, `{"status":429,"error":{"code":"insufficient_quota"}}`} {
 		f := ClassifyFailure([]byte(raw))
-		if f.Category != "quota" || f.Code != "usage_limit_reached" || f.Scope != "agent" || f.Retryable {
+		if f.Category != "quota" || (f.Code != "usage_limit_reached" && f.Code != "insufficient_quota") || f.Scope != "agent" || f.Retryable {
 			t.Fatal(f)
 		}
 	}
@@ -57,5 +58,17 @@ func TestAgyHeadlessPermissionDiagnostic(t *testing.T) {
 	}
 	if DiagnosticFailure(agy, []byte("A tool permission was configured")) != nil {
 		t.Fatal("ordinary warning classified as blocker")
+	}
+}
+
+func TestExplicitNetworkFailuresRemainUngradedAndRetryable(t *testing.T) {
+	for _, message := range []string{"There was a network issue connecting to the server, please try again.", "Reconnecting... (stream disconnected before completion: Connection reset by peer)", "API error: read tcp: connection reset by peer"} {
+		f := ClassifyFailure([]byte(strconv.Quote(message)))
+		if f.Category != "network" || f.Scope != "attempt" || !f.Retryable {
+			t.Fatal(f)
+		}
+	}
+	if f := ClassifyFailure([]byte(`{"message":"Task needs network configuration changes"}`)); f.Category == "network" {
+		t.Fatal("ordinary task failure treated as a transport error")
 	}
 }

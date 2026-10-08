@@ -63,11 +63,19 @@ func Stream(ctx context.Context, endpoint, key string, request Request, output i
 	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	response, err := client.Do(req)
 	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		failure := map[string]any{"type": "error", "error": map[string]any{"code": "connection_error", "message": "Responses transport failed"}}
+		if emitErr := json.NewEncoder(output).Encode(failure); emitErr != nil {
+			return emitErr
+		}
 		return fmt.Errorf("Responses transport failed")
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		failure := map[string]any{"type": "error", "error": map[string]any{"status": response.StatusCode, "code": "http_error", "message": "Responses HTTP request failed"}}
+		code := safeHTTPErrorCode(response.Body)
+		failure := map[string]any{"type": "error", "error": map[string]any{"status": response.StatusCode, "code": code, "message": "Responses HTTP request failed"}}
 		if err := json.NewEncoder(output).Encode(failure); err != nil {
 			return err
 		}
@@ -77,6 +85,30 @@ func Stream(ctx context.Context, endpoint, key string, request Request, output i
 		return fmt.Errorf("Responses server did not return SSE")
 	}
 	return Relay(response.Body, output)
+}
+
+// Retain only recognized machine codes; provider messages and bodies are private.
+func safeHTTPErrorCode(body io.Reader) string {
+	data, err := io.ReadAll(io.LimitReader(body, 64*1024+1))
+	if err != nil || len(data) > 64*1024 {
+		return "http_error"
+	}
+	var envelope struct {
+		Error struct {
+			Code string `json:"code"`
+			Type string `json:"type"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(data, &envelope) != nil {
+		return "http_error"
+	}
+	for _, code := range []string{envelope.Error.Code, envelope.Error.Type} {
+		switch code {
+		case "invalid_api_key", "authentication_error", "model_not_found", "model_not_supported", "insufficient_quota", "credit_balance_exhausted", "organization_spend_limit_exceeded", "project_spend_limit_exceeded", "organization_usage_limit_exceeded", "usage_limit_exceeded", "rate_limit_exceeded", "slow_down", "server_error", "server_is_overloaded", "invalid_request_error", "permission_denied":
+			return code
+		}
+	}
+	return "http_error"
 }
 
 // Relay supports multiline SSE data, heartbeats, CRLF and bounded events.

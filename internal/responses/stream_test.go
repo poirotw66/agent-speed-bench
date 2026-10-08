@@ -53,3 +53,31 @@ func TestHTTPFailureDoesNotExposeCredentialsOrBody(t *testing.T) {
 		t.Fatal(out.String(), err)
 	}
 }
+
+func TestHTTPFailurePreservesOnlyRecognizedCodes(t *testing.T) {
+	for _, code := range []string{"insufficient_quota", "project_spend_limit_exceeded", "model_not_found", "rate_limit_exceeded", "SECRET_PROVIDER_VALUE"} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(429)
+			json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": code, "message": "TEST_PRIVATE_KEY"}})
+		}))
+		var out bytes.Buffer
+		err := Stream(context.Background(), server.URL, "TEST_PRIVATE_KEY", Request{Model: "test", MaxOutputTokens: 1}, &out)
+		server.Close()
+		if err == nil || strings.Contains(out.String(), "TEST_PRIVATE_KEY") || strings.Contains(out.String(), "SECRET_PROVIDER_VALUE") {
+			t.Fatal(out.String(), err)
+		}
+		if code != "SECRET_PROVIDER_VALUE" && !strings.Contains(out.String(), code) {
+			t.Fatal("recognized code lost", out.String())
+		}
+	}
+	for _, body := range []string{"invalid", strings.Repeat("x", 64*1024+1), `{"error":{"type":"insufficient_quota","code":"unrecognized"}}`} {
+		got := safeHTTPErrorCode(strings.NewReader(body))
+		want := "http_error"
+		if strings.Contains(body, "insufficient_quota") {
+			want = "insufficient_quota"
+		}
+		if got != want {
+			t.Fatal(got, want)
+		}
+	}
+}

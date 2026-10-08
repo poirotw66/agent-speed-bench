@@ -140,3 +140,24 @@ func TestPoliciesAreSeparated(t *testing.T) {
 		t.Fatal(groups)
 	}
 }
+
+func TestReliabilityKeepsTheDenominatorAcrossMetricGroups(t *testing.T) {
+	pass, fail := true, false
+	runs := []telemetry.Run{
+		{ExperimentID: "e", Agent: "a", Case: "c", Status: "completed", Success: &pass, Metrics: telemetry.Metrics{SchemaVersion: 2, TTFABasis: "text_delta_receipt", Usage: telemetry.Usage{OutputTokenAccounting: "includes_thinking"}}},
+		{ExperimentID: "e", Agent: "a", Case: "c", Status: "failed", Success: &fail, Failure: &telemetry.Failure{Message: "connection reset by peer"}},
+		{ExperimentID: "e", Agent: "a", Case: "c", Status: "canceled", Success: &fail},
+		{ExperimentID: "e", Agent: "a", Case: "c", Warmup: true, Status: "completed", Success: &pass},
+	}
+	g := ReliabilityTotals(runs)
+	if len(g) != 1 || g[0].Attempts != 3 || g[0].Graded != 1 || g[0].Passed != 1 || g[0].Unavailable != 1 || g[0].Canceled != 1 || *g[0].CompletionRate < 33 || *g[0].CompletionRate > 34 {
+		t.Fatal(g)
+	}
+	if runs[1].Status != "failed" || runs[1].Success == nil || runs[1].Failure.Code != "" {
+		t.Fatal("stored evidence was modified")
+	}
+	var out bytes.Buffer
+	if err := HTML(&out, runs); err != nil || !strings.Contains(out.String(), "Reliability across all metric groups") || !strings.Contains(out.String(), "33.333") {
+		t.Fatal(err, out.String())
+	}
+}

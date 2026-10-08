@@ -95,3 +95,17 @@ func TestSSEReceiveIntervalExcludesFirstChunk(t *testing.T) {
 		t.Fatal("single chunk invented interval")
 	}
 }
+
+func TestCancellationTakesPriorityOverFailureReinterpretation(t *testing.T) {
+	failed := false
+	for _, failure := range []*Failure{
+		{Code: "connection_error", Message: "connection reset by peer"},
+		{Code: "insufficient_quota", Message: "usage limit reached"},
+	} {
+		original := Run{Status: "canceled", Success: &failed, Failure: failure}
+		view := ReportRun(original)
+		if view.Status != "canceled" || view.Success != nil || original.Success == nil || *original.Success {
+			t.Fatal(view, original)
+		}
+	}
+}
