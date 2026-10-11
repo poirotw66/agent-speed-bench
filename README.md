@@ -413,4 +413,17 @@ Attempt `timing.postprocess_seconds` now records runner postprocessing after age
 
 Isolated `agy` execution on macOS now stops before invoking the agent, records ungraded `agent_unavailable` with code `macos_keychain_isolation_unsupported`, and stops subsequent work for that agent configuration. Copying an OAuth token into a temporary HOME does not prevent native Keychain access. This is a containment measure, not a system Keychain repair. macOS nonisolated agy execution still uses native authentication and may show dialogs; Linux isolation is unchanged. The runner does not reset or modify Keychain settings, silently disable isolation, or switch account-backed tests to a separately billed API-key provider. Earlier raw records remain unchanged.
 
-The [official troubleshooting guide](https://www.antigravity.google/docs/cli/troubleshooting/) describes native keyring use. [Upstream issue #803](https://github.com/google-antigravity/antigravity-cli/issues/803) reports a matching storage dialog even when the default Keychain exists, including successful continuation after dismissal. No live agy rerun has verified a dialog-free repair.
+The [official troubleshooting guide](https://www.antigravity.google/docs/cli/troubleshooting/) describes native keyring use. [Upstream issue #803](https://github.com/google-antigravity/antigravity-cli/issues/803) reports a matching storage dialog even when the default Keychain exists, including successful continuation after dismissal. The 2026-10-11 recovery smoke used the original login HOME with agy 1.3.3: a direct `AGY_OK` call succeeded, followed by low/medium/high (two attempts each), all six completed and passed. No storage-failure diagnostics were found in the direct-call log. The user confirmed that no storage/reset dialogs appeared during this smoke. Long-running sessions and future token-refresh behavior remain unverified; this is a working native-home path, not an upstream Keychain repair.
+
+### Run agy with its native login HOME
+
+On macOS, use the explicit nonisolated authentication smoke:
+
+```sh
+make build
+./bin/agentspeedbench run benchmarks/agy-native-auth-smoke.yaml
+# Direct invocation from your normal login shell:
+AGY_CLI_DISABLE_AUTO_UPDATE=true agy --dangerously-skip-permissions -p 'Reply with exactly AGY_OK. Do not use tools.'
+```
+
+This profile sets `isolate_config: false`, keeps the original HOME and Keychain context, and tests low/medium/high twice each. The agy adapter disables auto-update for benchmark calls while preserving `--dangerously-skip-permissions`. Host settings, rules, plugins and login state may affect these calls, so the smoke is not an isolated performance comparison. Other isolated profiles remain unchanged. Do not override HOME with a disposable directory for this path. If storage/reset dialogs recur in the normal HOME, stop and investigate the native credential store; successful output alone does not clear that failure.

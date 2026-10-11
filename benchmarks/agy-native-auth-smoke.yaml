@@ -1,0 +1,28 @@
+# Use the native login HOME on macOS so Keychain resolves in the normal session.
+# Host settings are inherited: this is an authentication smoke, not an isolated speed comparison.
+name: agy-native-auth-smoke
+repeats: 2
+jobs: 1
+timeout_seconds: 60
+agents:
+  - name: agy-low
+    adapter: agy
+    isolate_config: false
+    model: gemini-3.8-flash-low
+    reasoning_effort: low
+  - name: agy-medium
+    adapter: agy
+    isolate_config: false
+    model: gemini-3.8-flash-medium
+    reasoning_effort: medium
+  - name: agy-high
+    adapter: agy
+    isolate_config: false
+    model: gemini-3.8-flash-high
+    reasoning_effort: high
+cases:
+  - name: enumerate
+    strip_instructions: true
+    prompt: Print integers 1 through 20, one per line, followed by BENCH_DONE on its own line. Do not call tools, modify files, or add commentary.
+    verify:
+      integer_sequence: {start: 1, end: 20, end_marker: BENCH_DONE}

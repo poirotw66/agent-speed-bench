@@ -257,4 +257,17 @@ CLI 會在階段切換時及每 30 秒顯示進度，包含目前階段、工作
 
 macOS 的隔離 agy 現在會在呼叫 CLI 前停止，記錄未評分的 `agent_unavailable`／`macos_keychain_isolation_unsupported`，並停止該 agent 設定的後續工作。複製 OAuth 檔案到暫存 HOME 不會阻止原生 Keychain 存取。這是避免重複觸發的保護措施，並非修復系統鑰匙圈；非隔離 agy 仍可能跳窗，Linux 隔離維持原行為。程式不重置鑰匙圈、不偷偷取消隔離，也不改用另外計費的 API-key 供應商。
 
-參考[官方故障排除文件](https://www.antigravity.google/docs/cli/troubleshooting/)及[上游 #803](https://github.com/google-antigravity/antigravity-cli/issues/803)。尚未以實際 agy 重測確認無彈窗。
+參考[官方故障排除文件](https://www.antigravity.google/docs/cli/troubleshooting/)及[上游 #803](https://github.com/google-antigravity/antigravity-cli/issues/803)。2026-10-11 改用原本登入 HOME 實測 agy 1.3.3：直接呼叫成功，低／中／高各兩次，共 6 次皆完成並通過驗證；直接呼叫 log 沒有儲存失敗紀錄。使用者確認本輪沒有再出現儲存／重置彈窗。長時間執行及日後更新 OAuth token 的行為仍待驗證，不能視為上游鑰匙圈問題已永久修復。
+
+## 使用原本 HOME 呼叫 agy
+
+macOS 可使用明確取消設定隔離的認證 smoke：
+
+```sh
+make build
+./bin/agentspeedbench run benchmarks/agy-native-auth-smoke.yaml
+# 在原本登入 shell 直接呼叫：
+AGY_CLI_DISABLE_AUTO_UPDATE=true agy --dangerously-skip-permissions -p 'Reply with exactly AGY_OK. Do not use tools.'
+```
+
+此配置明確設定 `isolate_config: false`，保留原本 HOME 與 Keychain 環境，測試低／中／高各兩次。agy adapter 在測試期間停用自動更新，持續使用 `--dangerously-skip-permissions`。呼叫會繼承使用者設定、規則、plugin 與登入狀態，因此不能當作完全隔離的速度比較；其他隔離配置維持不變。此方式不要另外覆寫為臨時 HOME。若原本 HOME 仍出現儲存／重置彈窗，應停止測試並調查原生認證存取，不能只靠輸出成功判定正常。

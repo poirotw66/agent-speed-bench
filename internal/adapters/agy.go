@@ -30,7 +30,8 @@ func (p *agyParser) BuildCommand(prompt, workdir string) (Command, error) {
 	if p.agent.IsolateConfig {
 		args = append(args, "--disable-slash-commands")
 	}
-	return Command{Path: path, Args: args}, nil
+	// Keep the executable stable during account-backed benchmark calls.
+	return Command{Path: path, Args: args, Env: []string{"AGY_CLI_DISABLE_AUTO_UPDATE=true"}}, nil
 }
 func (p *agyParser) RequiresTerminal() bool { return true }
 func (p *agyParser) TerminalSeen() bool     { return p.terminal }

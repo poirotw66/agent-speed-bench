@@ -52,6 +52,9 @@ func TestNativeCommandOptions(t *testing.T) {
 	}
 	p, _ = New(benchmark.Agent{Adapter: "agy", Model: "gemini-3.8-flash-high", ReasoningEffort: "high"})
 	c, _ = p.BuildCommand("$(touch nope)", "")
+	if strings.Join(c.Env, " ") != "AGY_CLI_DISABLE_AUTO_UPDATE=true" {
+		t.Fatal("agy must not update during a benchmark", c.Env)
+	}
 	if c.Path != "agy" || c.Args[1] != "$(touch nope)" || strings.Join(c.Args[2:], " ") != "--output-format stream-json --dangerously-skip-permissions --model gemini-3.8-flash-high --effort high" {
 		t.Fatal(c)
 	}
