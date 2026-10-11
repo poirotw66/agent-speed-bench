@@ -28,6 +28,36 @@ The demo runs six attempts, writes a fixture file, verifies the output and file 
 
 Flags must come before the YAML filename. `run` accepts `-out`, `-db`, and `-jobs`; `report` accepts `-out`, `-db`, and `-experiment`. Defaults are `runs/` and `agentspeedbench.db`. Exit code 1 indicates an infrastructure error, an unsuccessful agent attempt, or failed verification. Successful but ungraded attempts do not assert correctness.
 
+## Parallel execution and latest native measurement
+
+Use Go workers to run independent attempts concurrently:
+
+```sh
+./bin/agentspeedbench run -jobs 4 benchmarks/native-comparison.yaml
+```
+
+`-jobs` overrides the configuration's `jobs` value (1–64). All configured warmups finish before measured attempts begin. Use `jobs: 1` for isolated latency comparisons; concurrent attempts share machine resources and may share provider/account limits. Compare results at the same concurrency, and keep parallel measurements separate from sequential ones.
+
+### 2026-10-11 parallel output measurement
+
+This real CLI experiment used harness commit `9d9f2e8d7809579998d8e8485d970b5563055f02`, Go 1.26.9 on macOS arm64, Codex CLI 0.160.1, Cursor CLI `2026.10.01-e373342`, and agy 1.3.3. It used the seven configurations and integer-sequence case from `benchmarks/native-comparison.yaml`, with `jobs: 4`, `warmup_repeats: 1`, `repeats: 5`, a 180-second agent timeout, and `isolate_config: true` for every agent. Existing YOLO policies and Cursor workspace trust were retained. The command above enables parallelism but does not add the experiment's warmup or isolation overrides.
+
+The task was to print integers 1–100, one per line, followed by `BENCH_DONE`. This measures output-task behavior, not repository repair correctness. All 35 measured attempts passed the integer-sequence verifier; seven additional warmups also passed. Matrix elapsed time, including warmups, was **137.84 seconds**. Each median below has **n=5**, a small sample.
+
+| Requested configuration | Passed / measured | Agent wall p50, s | TTFA p50, s | Effective output tok/s p50 |
+| --- | --- | ---: | ---: | ---: |
+| GPT-6.1 Sol / medium | 5 / 5 | 9.34 | 8.44 | 22.16 |
+| GPT-6 Luna / high | 5 / 5 | 8.34 | 7.32 | 26.61 |
+| GPT-6 Luna / high / requested fast tier | 5 / 5 | 7.91 | 6.67 | 29.21 |
+| Cursor Auto | 5 / 5 | 15.47 | 13.96 | 16.93 |
+| AGY Gemini-3.8-Flash / low | 5 / 5 | 11.94 | 10.22 | 24.79 |
+| AGY Gemini-3.8-Flash / medium | 5 / 5 | 13.74 | 11.19 | 21.55 |
+| AGY Gemini-3.8-Flash / high | 5 / 5 | 13.13 | 11.04 | 36.77 |
+
+Effective output tok/s divides reported output tokens by the entire agent process wall time; it is not decoding throughput. AGY output accounting includes thinking tokens, while Codex and Cursor accounting remains unknown. These values do not establish a cross-provider decoding-speed ranking. TTFA is runner-observed and subject to CLI buffering. Model and effort labels are requested settings; the fast tier was requested but not observed in CLI telemetry, so this run does not prove a 1.5× speed tier.
+
+Local evidence is stored under `runs/native-parallel-round-20261011/`: `config.yaml`, `round-summary.json`, and experiment `native-parallel-output-100-20261011T033431Z-91bdcbfcd665aa64` containing the manifest, raw events, run records, and `report.html`. Runtime artifacts are Git-ignored and are not included in this repository; these paths describe the local evidence, not publicly downloadable results. Earlier reports remain unchanged.
+
 ## Supported agents
 
 | Adapter | Execution | Token usage | Tool intervals |
