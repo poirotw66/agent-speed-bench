@@ -417,6 +417,10 @@ func executeAttempt(parent context.Context, a benchmark.Agent, task benchmark.Ca
 		r.Status = "infrastructure_error"
 		r.Error = environmentErr.Error()
 		r.Failure = &telemetry.Failure{Category: "infrastructure", Code: "environment_preparation", Scope: "attempt", Message: r.Error}
+		if errors.Is(environmentErr, errAGYKeychainIsolation) {
+			r.Status = "agent_unavailable"
+			r.Failure.Code, r.Failure.Scope = "macos_keychain_isolation_unsupported", "agent"
+		}
 		return r, nil
 	}
 	adapter, err := adapters.New(a)

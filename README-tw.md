@@ -250,3 +250,11 @@ CLI 會在階段切換時及每 30 秒顯示進度，包含目前階段、工作
 檔案保存會逐一處理所有允許路徑。缺少、過大、非一般檔案或越界的路徑會彙整到 `artifact_errors`，其他有效檔案仍會保存。即使部分失敗，`source_manifest.json` 仍包含成功檔案與雜湊；全部失敗時為空陣列。保存失敗保留原評分，CLI 仍回傳非零狀態。
 
 `timing.postprocess_seconds` 會獨立記錄 agent 執行後的 runner 後處理耗時；文字與 HTML 報告顯示其中位數、樣本數及每次執行耗時。舊資料或未進入的階段維持 unknown，agent wall time 與吞吐量定義不變。各階段中位數相加不一定等於總耗時中位數。
+
+## macOS Antigravity 鑰匙圈限制
+
+使用者回報 2026-10-11 並行實驗仍出現 Antigravity「無法儲存／要求重置」彈窗；通過輸出驗證不代表無人值守正常，耗時可能包含互動等待，不能視為乾淨速度比較。原始紀錄維持不變。
+
+macOS 的隔離 agy 現在會在呼叫 CLI 前停止，記錄未評分的 `agent_unavailable`／`macos_keychain_isolation_unsupported`，並停止該 agent 設定的後續工作。複製 OAuth 檔案到暫存 HOME 不會阻止原生 Keychain 存取。這是避免重複觸發的保護措施，並非修復系統鑰匙圈；非隔離 agy 仍可能跳窗，Linux 隔離維持原行為。程式不重置鑰匙圈、不偷偷取消隔離，也不改用另外計費的 API-key 供應商。
+
+參考[官方故障排除文件](https://www.antigravity.google/docs/cli/troubleshooting/)及[上游 #803](https://github.com/google-antigravity/antigravity-cli/issues/803)。尚未以實際 agy 重測確認無彈窗。

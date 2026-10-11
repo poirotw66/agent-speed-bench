@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -42,8 +43,20 @@ func stripInstructions(root string) error {
 	})
 }
 
+var errAGYKeychainIsolation = errors.New("isolated agy OAuth execution on macOS is unavailable: temporary HOME does not isolate native Keychain access and may trigger storage/reset dialogs; no keychain settings were changed")
+
+func checkAgentHomeIsolation(a benchmark.Agent, platform string) error {
+	if a.IsolateConfig && a.Adapter == "agy" && platform == "darwin" {
+		return errAGYKeychainIsolation
+	}
+	return nil
+}
+
 // Credentials remain private in an ephemeral home and are never stored in artifacts.
 func prepareAgentHome(a benchmark.Agent, workdir string) ([]string, error) {
+	if err := checkAgentHomeIsolation(a, runtime.GOOS); err != nil {
+		return nil, err
+	}
 	if !a.IsolateConfig {
 		return nil, nil
 	}

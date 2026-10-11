@@ -2,8 +2,10 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -49,6 +51,16 @@ func TestEphemeralHomeCopiesOnlyAuthentication(t *testing.T) {
 	}
 	for adapter, path := range map[string]string{"codex": ".codex/auth.json", "cursor": ".cursor/cli-config.json", "agy": ".gemini/antigravity-cli/antigravity-oauth-token"} {
 		work := t.TempDir()
+		if adapter == "agy" && runtime.GOOS == "darwin" {
+			_, err := prepareAgentHome(benchmark.Agent{Adapter: adapter, IsolateConfig: true}, work)
+			if !errors.Is(err, errAGYKeychainIsolation) {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(filepath.Join(work, "home")); !os.IsNotExist(err) {
+				t.Fatal("blocked agy created a home", err)
+			}
+			continue
+		}
 		env, err := prepareAgentHome(benchmark.Agent{Adapter: adapter, IsolateConfig: true}, work)
 		if err != nil || len(env) == 0 {
 			t.Fatal(env, err)
@@ -117,5 +129,38 @@ func TestPatchIncludesTrackedAndNewSubmittedFiles(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(artifacts, "source_manifest.json")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAGYKeychainIsolationPlatformPolicy(t *testing.T) {
+	for _, platform := range []string{"darwin", "linux"} {
+		for _, isolated := range []bool{false, true} {
+			err := checkAgentHomeIsolation(benchmark.Agent{Adapter: "agy", IsolateConfig: isolated}, platform)
+			if errors.Is(err, errAGYKeychainIsolation) != (platform == "darwin" && isolated) {
+				t.Fatal(platform, isolated, err)
+			}
+		}
+		if err := checkAgentHomeIsolation(benchmark.Agent{Adapter: "codex", IsolateConfig: true}, platform); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestBlockedAGYDoesNotInvokeExecutable(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS Keychain guard")
+	}
+	dir := t.TempDir()
+	command := filepath.Join(dir, "fake-agy")
+	marker := filepath.Join(dir, "invoked")
+	if err := os.WriteFile(command, []byte("#!/bin/sh\ntouch '"+marker+"'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	r, err := executeOne(context.Background(), benchmark.Agent{Name: "agy", Adapter: "agy", Command: command, IsolateConfig: true}, fixtureTask(), 1, "test", dir)
+	if err != nil || r.Status != "agent_unavailable" || r.Success != nil || r.Failure == nil || r.Failure.Code != "macos_keychain_isolation_unsupported" || r.Failure.Scope != "agent" || r.Failure.Retryable {
+		t.Fatal(r, err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("blocked executable ran", err)
 	}
 }
