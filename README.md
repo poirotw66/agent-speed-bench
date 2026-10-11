@@ -38,6 +38,34 @@ Use Go workers to run independent attempts concurrently:
 
 `-jobs` overrides the configuration's `jobs` value (1–64). All configured warmups finish before measured attempts begin. Use `jobs: 1` for isolated latency comparisons; concurrent attempts share machine resources and may share provider/account limits. Compare results at the same concurrency, and keep parallel measurements separate from sequential ones.
 
+### 2026-10-11 sequential 100 / 500 output retest
+
+The latest retest used clean harness commit `b2d2c674cd3754f1ae00a1e86145580cd8bae744`, `jobs: 1`, and the existing controlled integer-output cases for 100 and 500 lines. The 2000-line case was omitted. Codex and Cursor used isolated configuration; agy explicitly retained its native login HOME with `isolate_config: false`. Existing YOLO flags remained enabled, and the agy adapter disabled auto-update. This is a CLI output-task comparison; inherited agy settings can affect results.
+
+Each requested configuration and output length has **3 completed measured samples**. All **42 measured samples and 14 warmups passed**. The user confirmed that no Antigravity Keychain storage/reset dialogs appeared during this round. Long-running sessions and future OAuth token-refresh behavior remain unverified.
+
+The original 10-repeat schedule was reduced at the user's request: 13 completed measured samples were retained, 28 samples were added in a supplementary experiment, and one canceled agy-high / 500 call was replaced in a separate experiment. The canceled attempt remains in the raw evidence and is excluded from the medians below. Original manifests and run records were not rewritten; these are pooled descriptive results across three experiments, not a single uninterrupted matrix.
+
+| Requested configuration | 100-line wall p50, s | 100-line effective tok/s p50 | 500-line wall p50, s | 500-line effective tok/s p50 |
+| --- | ---: | ---: | ---: | ---: |
+| GPT-6.1 Sol / medium | 9.76 | 21.20 | 19.39 | 51.92 |
+| GPT-6 Luna / high | 7.69 | 29.64 | 12.41 | 83.51 |
+| GPT-6 Luna / high / requested fast tier | 7.26 | 30.71 | 13.81 | 76.18 |
+| Cursor Auto | 15.52 | 16.36 | 20.19 | 52.26 |
+| AGY Gemini-3.8-Flash / low | 7.08 | 41.82 | 16.29 | 116.36 |
+| AGY Gemini-3.8-Flash / medium | 6.21 | 47.66 | 13.73 | 138.13 |
+| AGY Gemini-3.8-Flash / high | 8.48 | 51.30 | 15.19 | 145.93 |
+
+Every cell has **n=3**, a small sample; minor differences do not establish a stable ranking. Effective tok/s is reported output tokens divided by the whole agent process wall time, not pure generation throughput. AGY output accounting includes thinking; Codex and Cursor accounting remains unknown. Codex TTFA uses complete-message receipt, while Cursor and agy use text-delta receipt. These boundaries are not interchangeable. Generation and model-active tok/s remain unknown.
+
+#### Fast-tier verification
+
+The Codex adapter passes `--config 'service_tier="fast"' --enable fast_mode`, matching the [official Fast mode configuration](https://learn.chatgpt.com/docs/agent-configuration/speed). The [configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference) describes `fast` as mapping to request value `priority`. The local Codex CLI 0.160.1 model catalog advertised Fast for `gpt-6-luna`, with a `1.5x speed` description. A subsequent short diagnostic call completed successfully with these settings.
+
+This verifies that Fast is enabled/requested at the CLI configuration level. The six measured fast calls and the diagnostic call did not provide an authoritative backend service-tier receipt, so actual service tier remains **unknown**. Relative to Luna high, requested-fast wall time was about 1.06x faster at 100 lines and 11.3% longer at 500 lines. Those observations neither prove a 1.5x acceleration nor establish that the backend ignored Fast.
+
+Local evidence: `runs/native-output-100-500-20261011/summary-report.html`, `summary.json`, configuration files, database, and the three experiment directories. The complete report retains the cancellation and original schedule coverage. Fast verification is recorded separately in `runs/fast-verification-20261011/audit.json` and `diagnostic-summary.json`; the diagnostic call is not included in the speed table. These runtime artifacts are Git-ignored and are not publicly downloadable from this repository.
+
 ### 2026-10-11 parallel output measurement
 
 This real CLI experiment used harness commit `9d9f2e8d7809579998d8e8485d970b5563055f02`, Go 1.26.9 on macOS arm64, Codex CLI 0.160.1, Cursor CLI `2026.10.01-e373342`, and agy 1.3.3. It used the seven configurations and integer-sequence case from `benchmarks/native-comparison.yaml`, with `jobs: 4`, `warmup_repeats: 1`, `repeats: 5`, a 180-second agent timeout, and `isolate_config: true` for every agent. Existing YOLO policies and Cursor workspace trust were retained. The command above enables parallelism but does not add the experiment's warmup or isolation overrides.
