@@ -240,3 +240,9 @@ CI 的 macOS／Linux 工作改為執行完整 `make check`，涵蓋壞版失敗�
 每筆實際工作新增 `timing`，記錄工作流程準備、評分（含完整性檢查）、artifact 保存、清理與總時間；各 command 評分層也記錄程序 wall time。總時間從建立 artifact 目錄後到最終紀錄寫入前，涵蓋 agent 與輸出後處理，排除實驗 preflight、最終 JSON／SQLite 寫入、排隊及報告產生。原 agent wall time 與有效 tokens/s 定義不變。未進入的階段與歷史資料保持未知；報告另列工作流程中位數及各自有效樣本數。
 
 CLI 會在階段切換時及每 30 秒顯示進度，包含目前階段、工作經過時間、最近收到 agent／verifier 輸出的 UTC 時間與距今多久；未換行的部分輸出也會更新觀察時間。沒有輸出時保持 `unknown`，不直接判定卡住，不觸發重試或改變評分。進度輸出與廠商 telemetry 事件分開。
+
+進度輸出改用每個實驗最多 128 則訊息的佇列；終端變慢時可能略過進度訊息，事件檔案與評分仍是正式依據。結束時最多等待 100 毫秒清空進度佇列。任意阻塞的 writer 無法取消，因此一個輸出 goroutine 可能等到 writer 返回或程序結束；測量後的摘要與報告輸出仍可能等待終端。
+
+工作目錄刪除失敗會記錄為 `cleanup_failure`，包含殘留目錄與錯誤，顯示在文字／HTML 報告，並使 run/resume 回傳非零狀態（包含 warmup），保留原評分。安裝與還原共用目的目錄的檔案鎖，涵蓋封存、替換與雜湊驗證；鎖檔會保留。
+
+`make check-toolchain` 會顯示 Go 執行檔的實際位置，並檢查是否符合 `go.mod` 的最低版本；build/test/check/install 都會先執行此檢查。請將 Go 安裝在固定目錄，例如 `~/.local/share/agentspeedbench/toolchains/<version>/go`，把其 `bin` 加入 PATH，或將 `go`、`gofmt` 連結到 `~/.local/bin`。避免只放在 `/tmp`。正式實驗前執行 `go version` 與 `make check-toolchain`；還原 harness 不會同時還原 Go 或其他驗證依賴。

@@ -15,9 +15,10 @@ import (
 const progressInterval = 30 * time.Second
 
 type attemptOptions struct {
-	guard    func() error
-	progress io.Writer
-	interval time.Duration
+	removeWorkspace func(string) error
+	guard           func() error
+	progress        io.Writer
+	interval        time.Duration
 }
 
 // Receipt times describe observable output, never model liveness or execution.
@@ -122,4 +123,44 @@ func (w *receiptWriter) Write(data []byte) (int, error) {
 		w.receipt(time.Now())
 	}
 	return n, err
+}
+
+// queuedProgress keeps terminal backpressure outside telemetry and timing locks.
+// Only one output goroutine is created per matrix. Progress is best effort.
+type queuedProgress struct {
+	lines chan []byte
+	done  chan struct{}
+}
+
+func newQueuedProgress(output io.Writer) *queuedProgress {
+	p := &queuedProgress{lines: make(chan []byte, 128), done: make(chan struct{})}
+	go func() {
+		defer close(p.done)
+		for line := range p.lines {
+			if _, err := output.Write(line); err != nil {
+				return
+			}
+		}
+	}()
+	return p
+}
+
+func (p *queuedProgress) Write(data []byte) (int, error) {
+	// No output lock or wait is allowed on the collection path.
+	select {
+	case p.lines <- append([]byte(nil), data...):
+	default:
+	}
+	return len(data), nil
+}
+
+func (p *queuedProgress) close() {
+	close(p.lines)
+	// An arbitrary io.Writer cannot be canceled. Bound the final drain wait.
+	timer := time.NewTimer(100 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-p.done:
+	case <-timer.C:
+	}
 }

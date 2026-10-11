@@ -252,3 +252,21 @@ func TestWorkflowTimingsAreSeparateFromAgentSpeedAndUnknownHistorically(t *testi
 		t.Fatal("historical timing invented", group)
 	}
 }
+
+func TestCleanupFailureVisibleWithoutChangingGrade(t *testing.T) {
+	passed := true
+	runs := []telemetry.Run{{ID: "cleanup-test", Status: "completed", Success: &passed, Cleanup: &telemetry.CleanupFailure{Path: "/residual/workspace", Error: "permission denied"}}}
+	var text, html bytes.Buffer
+	Text(&text, runs)
+	if err := HTML(&html, runs); err != nil {
+		t.Fatal(err)
+	}
+	for _, output := range []string{text.String(), html.String()} {
+		if !strings.Contains(output, "cleanup failed") || !strings.Contains(output, "/residual/workspace") || !strings.Contains(output, "permission denied") {
+			t.Fatal(output)
+		}
+	}
+	if runs[0].Success == nil || !*runs[0].Success {
+		t.Fatal("cleanup error changed the grade")
+	}
+}

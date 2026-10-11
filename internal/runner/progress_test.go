@@ -91,3 +91,76 @@ func TestHeartbeatContinuesWithoutOutputAndRemainsUnknown(t *testing.T) {
 		}
 	}
 }
+
+// A terminal that stops reading must not stall the process or receipt timestamps.
+type blockedProgress struct{ entered, release chan struct{} }
+
+func (b *blockedProgress) Write(data []byte) (int, error) {
+	select {
+	case b.entered <- struct{}{}:
+	default:
+	}
+	<-b.release
+	return len(data), nil
+}
+
+func TestBlockedProgressDoesNotStallAttempt(t *testing.T) {
+	sink := &blockedProgress{entered: make(chan struct{}, 1), release: make(chan struct{})}
+	queue := newQueuedProgress(sink)
+	defer func() { close(sink.release); queue.close() }()
+	queue.Write([]byte("initial"))
+	<-sink.entered
+	// Saturate the bounded queue before running an attempt.
+	for range 256 {
+		queue.Write([]byte("queued"))
+	}
+	done := make(chan telemetry.Run, 1)
+	go func() {
+		r, _ := executeAttempt(context.Background(), benchmark.Agent{Name: "fixture", Adapter: "generic", Command: "sh", Args: []string{"-c", "printf Done"}}, fixtureTask(), 1, "test", t.TempDir(), false, attemptOptions{progress: queue})
+		done <- r
+	}()
+	select {
+	case r := <-done:
+		if r.Status != "completed" || r.Metrics.TTFASeconds == nil || r.Timing == nil {
+			t.Fatal(r)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("blocked progress stalled telemetry or completion")
+	}
+}
+
+func TestCleanupFailurePreservesGradeAndEvidence(t *testing.T) {
+	var residual string
+	task := fixtureTask()
+	task.Verify.OutputContains = "Done"
+	r, err := executeAttempt(context.Background(), benchmark.Agent{Name: "fixture", Adapter: "generic", Command: "sh", Args: []string{"-c", "printf Done"}}, task, 1, "test", t.TempDir(), false, attemptOptions{removeWorkspace: func(path string) error { residual = path; return os.ErrPermission }})
+	defer os.RemoveAll(residual)
+	if err != nil || r.Status != "completed" || r.Success == nil || !*r.Success || r.Cleanup == nil || r.Cleanup.Path != residual {
+		t.Fatal(r, err)
+	}
+	data, err := os.ReadFile(filepath.Join(r.ArtifactDir, "run.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored telemetry.Run
+	if err := json.Unmarshal(data, &stored); err != nil || stored.Cleanup == nil || stored.Cleanup.Path != residual {
+		t.Fatal(stored, err)
+	}
+}
+
+func TestProgressDrainDoesNotWaitForBlockedWriter(t *testing.T) {
+	sink := &blockedProgress{entered: make(chan struct{}, 1), release: make(chan struct{})}
+	queue := newQueuedProgress(sink)
+	queue.Write([]byte("blocked"))
+	<-sink.entered
+	done := make(chan struct{})
+	go func() { queue.close(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		close(sink.release)
+		t.Fatal("final progress drain waited for a blocked writer")
+	}
+	close(sink.release)
+	<-queue.done
+}

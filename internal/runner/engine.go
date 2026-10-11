@@ -151,7 +151,9 @@ func executeMatrix(ctx context.Context, cfg benchmark.Config, result Result, sto
 	dir, experiment := result.Directory, result.Manifest.ExperimentID
 	scoringGuard := func() error { return checkScoringProvenance(cfg, result.Manifest.Provenance) }
 	if progress != nil {
-		progress = &lockedWriter{w: progress}
+		queued := newQueuedProgress(progress)
+		defer queued.close()
+		progress = queued
 	}
 	covered := map[string]bool{}
 	for _, r := range result.Runs {
@@ -346,7 +348,16 @@ func executeAttempt(parent context.Context, a benchmark.Agent, task benchmark.Ca
 		}
 		return r, nil
 	}
-	defer func() { monitor.setPhase("cleanup"); os.RemoveAll(workdir) }()
+	defer func() {
+		monitor.setPhase("cleanup")
+		remove := opts.removeWorkspace
+		if remove == nil {
+			remove = os.RemoveAll
+		}
+		if cleanupErr := remove(workdir); cleanupErr != nil {
+			r.Cleanup = &telemetry.CleanupFailure{Path: workdir, Error: cleanupErr.Error()}
+		}
+	}()
 	workspace := filepath.Join(workdir, "workspace")
 	prepStart := time.Now()
 	r.Environment.GoCachePolicy = task.GoCache

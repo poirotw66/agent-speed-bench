@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Build clean Git sources and install atomically while preserving binary hashes."""
 import argparse
+from contextlib import contextmanager
+import fcntl
 import hashlib
 import os
 from pathlib import Path
@@ -44,7 +46,24 @@ def archive(source, archive_dir):
     return target
 
 
+@contextmanager
+def installation_lock(destination):
+    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # Keep the lock file in place: unlinking it could split concurrent locks.
+    with (destination.parent / ".agentspeedbench-install.lock").open("a+b") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
 def install(source, destination, archive_dir):
+    with installation_lock(destination):
+        install_locked(source, destination, archive_dir)
+
+
+def install_locked(source, destination, archive_dir):
     # Validate both archives before replacing the currently installed executable.
     new_archive = archive(source, archive_dir)
     if destination.exists():
@@ -79,6 +98,7 @@ def main():
             raise ValueError("Archived binary hash mismatch")
         install(source, destination, archive_dir)
         return
+    subprocess.run(["python3", str(ROOT / "scripts/check-toolchain.py")], check=True)
     revision = clean_revision()
     with tempfile.TemporaryDirectory(prefix="agentspeedbench-install-") as temporary:
         source = Path(temporary) / "agentspeedbench"

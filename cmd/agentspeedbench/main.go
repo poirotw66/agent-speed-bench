@@ -97,6 +97,9 @@ func run(ctx context.Context, args []string) error {
 			return runErr
 		}
 		for _, r := range result.Runs {
+			if r.Cleanup != nil {
+				return errors.New("workspace cleanup failed; grading results are preserved; inspect report.html")
+			}
 			if r.Warmup {
 				continue
 			}

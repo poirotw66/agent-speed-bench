@@ -119,7 +119,13 @@ type AttemptTiming struct {
 	CleanupSeconds      *float64  `json:"cleanup_seconds"`
 }
 
+type CleanupFailure struct {
+	Path  string `json:"path"`
+	Error string `json:"error"`
+}
+
 type Run struct {
+	Cleanup        *CleanupFailure      `json:"cleanup_failure,omitempty"`
 	Timing         *AttemptTiming       `json:"timing,omitempty"`
 	PatchBaseline  string               `json:"patch_baseline,omitempty"`
 	ArtifactErrors []string             `json:"artifact_errors,omitempty"`
