@@ -246,3 +246,7 @@ CLI 會在階段切換時及每 30 秒顯示進度，包含目前階段、工作
 工作目錄刪除失敗會記錄為 `cleanup_failure`，包含殘留目錄與錯誤，顯示在文字／HTML 報告，並使 run/resume 回傳非零狀態（包含 warmup），保留原評分。安裝與還原共用目的目錄的檔案鎖，涵蓋封存、替換與雜湊驗證；鎖檔會保留。
 
 `make check-toolchain` 會顯示 Go 執行檔的實際位置，並檢查是否符合 `go.mod` 的最低版本；build/test/check/install 都會先執行此檢查。請將 Go 安裝在固定目錄，例如 `~/.local/share/agentspeedbench/toolchains/<version>/go`，把其 `bin` 加入 PATH，或將 `go`、`gofmt` 連結到 `~/.local/bin`。避免只放在 `/tmp`。正式實驗前執行 `go version` 與 `make check-toolchain`；還原 harness 不會同時還原 Go 或其他驗證依賴。
+
+檔案保存會逐一處理所有允許路徑。缺少、過大、非一般檔案或越界的路徑會彙整到 `artifact_errors`，其他有效檔案仍會保存。即使部分失敗，`source_manifest.json` 仍包含成功檔案與雜湊；全部失敗時為空陣列。保存失敗保留原評分，CLI 仍回傳非零狀態。
+
+`timing.postprocess_seconds` 會獨立記錄 agent 執行後的 runner 後處理耗時；文字與 HTML 報告顯示其中位數、樣本數及每次執行耗時。舊資料或未進入的階段維持 unknown，agent wall time 與吞吐量定義不變。各階段中位數相加不一定等於總耗時中位數。

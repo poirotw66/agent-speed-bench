@@ -234,9 +234,9 @@ func TestMetricCountsUseObservedValuesAndWarnForPassedSubset(t *testing.T) {
 func TestWorkflowTimingsAreSeparateFromAgentSpeedAndUnknownHistorically(t *testing.T) {
 	value := 0.5
 	passed := true
-	runs := []telemetry.Run{{ExperimentID: "e", Agent: "a", Case: "c", Status: "completed", Success: &passed, Metrics: telemetry.Metrics{SchemaVersion: 2, WallSeconds: 1}, Timing: &telemetry.AttemptTiming{TotalSeconds: 3, VerificationSeconds: &value, CaptureSeconds: &value, CleanupSeconds: &value, PreparationSeconds: &value}}}
+	runs := []telemetry.Run{{ExperimentID: "e", Agent: "a", Case: "c", Status: "completed", Success: &passed, Metrics: telemetry.Metrics{SchemaVersion: 2, WallSeconds: 1}, Timing: &telemetry.AttemptTiming{TotalSeconds: 3, PostprocessSeconds: &value, VerificationSeconds: &value, CaptureSeconds: &value, CleanupSeconds: &value, PreparationSeconds: &value}}}
 	group := Aggregate(runs)[0]
-	if *group.WallP50 != 1 || *group.TotalP50 != 3 || *group.VerificationP50 != 0.5 || group.Counts.Total != 1 {
+	if *group.WallP50 != 1 || *group.TotalP50 != 3 || *group.VerificationP50 != 0.5 || group.Counts.Total != 1 || group.Counts.Postprocess != 1 || group.PostprocessP50 == nil || *group.PostprocessP50 != value {
 		t.Fatal(group)
 	}
 	var html bytes.Buffer
@@ -245,6 +245,15 @@ func TestWorkflowTimingsAreSeparateFromAgentSpeedAndUnknownHistorically(t *testi
 	}
 	if !strings.Contains(html.String(), "Workflow p50, s") || !strings.Contains(html.String(), "Workflow total: 3.000 s") {
 		t.Fatal(html.String())
+	}
+	runs[0].Timing.PostprocessSeconds = nil
+	group = Aggregate(runs)[0]
+	if group.PostprocessP50 != nil || group.Counts.Postprocess != 0 {
+		t.Fatal("historical postprocessing invented", group)
+	}
+	html.Reset()
+	if err := HTML(&html, runs); err != nil || !strings.Contains(html.String(), "Postprocessing: unknown (n=0)") {
+		t.Fatal(html.String(), err)
 	}
 	runs[0].Timing = nil
 	group = Aggregate(runs)[0]

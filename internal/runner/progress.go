@@ -109,7 +109,7 @@ func (m *attemptMonitor) finish() *telemetry.AttemptTiming {
 		}
 		return &seconds
 	}
-	return &telemetry.AttemptTiming{StartedAt: m.start.UTC(), FinishedAt: now.UTC(), TotalSeconds: now.Sub(m.start).Seconds(), PreparationSeconds: value("preparation"), VerificationSeconds: value("verification"), CaptureSeconds: value("capture"), CleanupSeconds: value("cleanup")}
+	return &telemetry.AttemptTiming{StartedAt: m.start.UTC(), FinishedAt: now.UTC(), TotalSeconds: now.Sub(m.start).Seconds(), PostprocessSeconds: value("postprocess"), PreparationSeconds: value("preparation"), VerificationSeconds: value("verification"), CaptureSeconds: value("capture"), CleanupSeconds: value("cleanup")}
 }
 
 type receiptWriter struct {

@@ -27,7 +27,7 @@ func TestWorkflowTimingSurvivesCaptureAndCleanup(t *testing.T) {
 		t.Fatal(r, err)
 	}
 	timing := r.Timing
-	if timing.TotalSeconds < r.Metrics.WallSeconds+*timing.VerificationSeconds || timing.PreparationSeconds == nil || timing.CaptureSeconds == nil || timing.CleanupSeconds == nil || len(r.Verification) != 1 || r.Verification[0].WallSeconds == nil || *r.Verification[0].WallSeconds < 0.08 {
+	if timing.TotalSeconds < r.Metrics.WallSeconds+*timing.VerificationSeconds || timing.PostprocessSeconds == nil || timing.PreparationSeconds == nil || timing.CaptureSeconds == nil || timing.CleanupSeconds == nil || len(r.Verification) != 1 || r.Verification[0].WallSeconds == nil || *r.Verification[0].WallSeconds < 0.08 {
 		t.Fatal(timing, r.Verification)
 	}
 	data, err := os.ReadFile(filepath.Join(r.ArtifactDir, "run.json"))
@@ -54,7 +54,7 @@ func TestWorkflowTimingSurvivesCaptureAndCleanup(t *testing.T) {
 func TestEarlyPreparationFailureLeavesUnreachedStagesUnknown(t *testing.T) {
 	task := fixtureTask()
 	r, err := executeAttempt(context.Background(), benchmark.Agent{Name: "fixture", Adapter: "generic", Command: "sh"}, task, 1, "test", t.TempDir(), false, attemptOptions{guard: func() error { return os.ErrNotExist }})
-	if err != nil || r.Timing == nil || r.Timing.VerificationSeconds != nil || r.Timing.CaptureSeconds != nil || r.Timing.CleanupSeconds != nil || r.Timing.PreparationSeconds == nil {
+	if err != nil || r.Timing == nil || r.Timing.PostprocessSeconds != nil || r.Timing.VerificationSeconds != nil || r.Timing.CaptureSeconds != nil || r.Timing.CleanupSeconds != nil || r.Timing.PreparationSeconds == nil {
 		t.Fatal(r, err)
 	}
 }

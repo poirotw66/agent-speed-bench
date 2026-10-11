@@ -112,6 +112,7 @@ type VerificationResult struct {
 type AttemptTiming struct {
 	StartedAt           time.Time `json:"started_at"`
 	FinishedAt          time.Time `json:"finished_at"`
+	PostprocessSeconds  *float64  `json:"postprocess_seconds"`
 	TotalSeconds        float64   `json:"total_seconds"`
 	PreparationSeconds  *float64  `json:"preparation_seconds"`
 	VerificationSeconds *float64  `json:"verification_seconds"`
