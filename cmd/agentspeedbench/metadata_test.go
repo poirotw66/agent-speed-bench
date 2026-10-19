@@ -40,6 +40,17 @@ func TestManifestCoverageRequiresMatchingValidEvidence(t *testing.T) {
 	}
 }
 
+func TestReportLabelsComeFromVerifiedSequenceConfiguration(t *testing.T) {
+	cfg, err := benchmark.Load("../../benchmarks/native-output-100-500.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plans := manifestPlans(runner.Manifest{ExperimentID: "test", Config: cfg})
+	if len(plans) != 14 || plans[0].OutputLines == nil || *plans[0].OutputLines != 100 || plans[1].OutputLines == nil || *plans[1].OutputLines != 500 {
+		t.Fatal(plans)
+	}
+}
+
 func TestRunReportsCaptureFailureWithoutErasingStoredGrade(t *testing.T) {
 	root := t.TempDir()
 	config := benchmark.Config{Name: "capture-grade", Repeats: 1, Jobs: 1, TimeoutSeconds: 2, Agents: []benchmark.Agent{{Name: "fixture", Adapter: "generic", Command: "sh", Args: []string{"-c", "printf Done"}}}, Cases: []benchmark.Case{{Name: "task", Prompt: "offline fixture", RetainFiles: []string{"missing.txt"}, Verify: benchmark.Verify{OutputContains: "Done"}}}}

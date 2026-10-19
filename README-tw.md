@@ -54,6 +54,10 @@ go build -trimpath -o bin/agentspeedbench ./cmd/agentspeedbench
 
 每次新的 `run` 會在建立資料庫或呼叫 agent 前，先顯示選定項目、並行數、暖身／正式／總次數，以及繼承原本 HOME 的設定。`--dry-run` 輸出 JSON 計畫，只進行靜態驗證，不確認 CLI 安裝、認證、repo commit、網路或實際執行結果。計畫次數是 agent 嘗試次數，不是上游模型請求數或費用估算。macOS 的 `run`、`--dry-run` 與 `doctor` 會在呼叫任何 CLI 前拒絕不支援的 agy 隔離配置，提示明確改用原本 HOME；不會自動取消隔離。被阻擋的 dry-run 仍會列出 JSON 計畫與診斷，再以非零狀態結束。
 
+## 吞吐量優先報告
+
+HTML 首屏以 **Effective output tok/s p50** 為重點，寬螢幕並排案例表格，小螢幕垂直排列。100／500 等整數輸出行數取自驗證過的 manifest，沒有 manifest 時保留案例原名。每列顯示 token 計數定義、通過／已評分數及該指標有效樣本數；暖身不列入、缺值保持未知，零值保持零。不同實驗與政策分組不合併，也不將不同 token 定義排成快慢名次。可靠性、詳細指標及逐次紀錄／Fast 證據可在下方展開。使用 `report` 即可套用新版樣式到既有資料，不需重跑模型。
+
 ## 吞吐量的界線
 
 | 指標 | 意義 |

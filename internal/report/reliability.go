@@ -11,6 +11,7 @@ import (
 type Plan struct {
 	Experiment, Agent, Case string
 	Repeats                 int
+	OutputLines             *int
 }
 
 func count(v *int) string {

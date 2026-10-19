@@ -61,7 +61,12 @@ func manifestPlans(m runner.Manifest) []report.Plan {
 	plans := []report.Plan{}
 	for _, agent := range m.Config.Agents {
 		for _, task := range m.Config.Cases {
-			plans = append(plans, report.Plan{Experiment: m.ExperimentID, Agent: agent.Name, Case: task.Name, Repeats: m.Config.Repeats})
+			plan := report.Plan{Experiment: m.ExperimentID, Agent: agent.Name, Case: task.Name, Repeats: m.Config.Repeats}
+			if sequence := task.Verify.IntegerSequence; sequence != nil {
+				lines := sequence.End - sequence.Start + 1
+				plan.OutputLines = &lines
+			}
+			plans = append(plans, plan)
 		}
 	}
 	return plans

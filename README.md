@@ -135,6 +135,10 @@ Sources for the supported event shapes:
 
 Parser fixtures cover these documented shapes. Codex has been exercised locally with ChatGPT authentication. Cursor Auto and agy Gemini 3.8 Flash have also been exercised locally; authenticated Claude remains unverified. CLI protocol changes may require adapter updates.
 
+## Throughput-first HTML reports
+
+HTML reports lead with **Effective output tok/s p50**, using side-by-side case tables on wide screens and stacked tables on smaller screens. Integer-output case labels (such as 100/500 lines) come from a validated manifest; missing manifests retain the original case names. Each row shows token accounting, passed/graded counts and the metric's own sample count. Warmups remain excluded, missing metrics stay unknown, and explicit zero stays zero. Existing experiment and policy groups are preserved without pooling or ranking unlike token definitions. Reliability, full diagnostics and run history/Fast evidence remain available in expandable sections. Rebuild a report with `report` to apply the layout to existing data; no model calls are needed.
+
 ## What the metrics mean
 
 | Metric | Definition and limits |
