@@ -1,8 +1,10 @@
 # AgentSpeedBench
 
+[![Go checks](https://github.com/poirotw66/agent-speed-bench/actions/workflows/ci.yml/badge.svg)](https://github.com/poirotw66/agent-speed-bench/actions/workflows/ci.yml)
+
 使用 Go 測量 coding agent 的啟動延遲、有效 token 吞吐量、工具呼叫時間及任務正確性。
 
-這個第一版已能執行，架構為 **Go CLI + YAML + JSONL + SQLite + HTML 報表**。參考 [HarnessBench](https://github.com/nyosegawa/harness-bench) 的相同任務比較方式，但目前未實作其 hidden tests 或案例格式相容性。完整設定與事件合約請見 [英文文件](README.md)。
+這個第一版已能執行，架構為 **Go CLI + YAML + JSONL + SQLite + HTML 報表**。參考 [HarnessBench](https://github.com/nyosegawa/harness-bench) 的相同任務比較方式，但目前未實作其 hidden tests 或案例格式相容性。精簡總覽見 [英文 README](README.md)；詳細結果與方法見 [results](docs/results.md)、[guide](docs/guide.md)。
 
 ## 快速開始
 
