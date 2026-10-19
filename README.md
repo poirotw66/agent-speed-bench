@@ -2,9 +2,11 @@
 
 [![Go checks](https://github.com/poirotw66/agent-speed-bench/actions/workflows/ci.yml/badge.svg)](https://github.com/poirotw66/agent-speed-bench/actions/workflows/ci.yml)
 
+[English](README.md) · [繁體中文](README-tw.md)
+
 Measures coding-agent latency, reported token throughput, tool intervals, and end-to-end correctness with a Go CLI.
 
-[繁體中文](README-tw.md) · [Results](docs/results.md) · [Usage & methodology](docs/guide.md) · [Measurement plan](docs/measurement-remediation-plan.md)
+[Results](docs/results.md) · [Usage & methodology](docs/guide.md) · [Measurement plan](docs/measurement-remediation-plan.md)
 
 Inspired by [HarnessBench](https://github.com/nyosegawa/harness-bench); independent implementation (YAML, local repo snapshots, JSONL, SQLite, standalone HTML). No web service required.
 
