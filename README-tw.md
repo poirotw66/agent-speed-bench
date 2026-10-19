@@ -37,6 +37,23 @@ go build -trimpath -o bin/agentspeedbench ./cmd/agentspeedbench
 
 內建 coding CLI 統一使用指定的 YOLO 模式：Codex／Cursor 加上 `--yolo`，agy／Claude 加上 `--dangerously-skip-permissions`。Cursor 另指定 `--sandbox disabled`，避免繼承不同權限政策。每筆紀錄保留 adapter 的權限標記，舊 sandbox 結果不與 YOLO 結果合併。Generic 命令保留自行指定的 argv；demo 與 API adapter 沒有 coding CLI 權限模式。Workspace 隔離用於保護來源 checkout，不是主機安全沙箱；repo 內的測試仍可能被 agent 修改，不能當成防竄改的 hidden tests。
 
+## 精簡測試與執行計畫
+
+`benchmarks/native-output-100-500.yaml` 提供七組設定，只測 100／500，各正式測試 3 次、暖身 1 次，採單工：**14 次暖身 + 42 次正式 = 56 次預計呼叫**。Codex／Cursor 隔離設定；agy 明確使用 `isolate_config: false`，保留原本登入 HOME，避免已知的 macOS Keychain 隔離問題。agy 仍會繼承主機設定，不代表各組設定完全隔離。原 controlled-output 的 10 次與 2000 案例配置保持可用。
+
+```sh
+# 只顯示計畫，不呼叫 CLI、不解析 repo、不建立資料庫或 artifacts。
+./bin/agentspeedbench run --dry-run benchmarks/native-output-100-500.yaml
+# 使用配置中的精確名稱篩選。
+./bin/agentspeedbench run --dry-run --agent luna-high,luna-high-fast --case short,medium --repeats 3 benchmarks/native-output-100-500.yaml
+# 執行一組：1 次暖身、3 次正式。
+./bin/agentspeedbench run --agent luna-high --case short --repeats 3 benchmarks/native-output-100-500.yaml
+```
+
+旗標必須放在 YAML 檔名前。`--agent`／`--case` 接受逗號分隔名稱，維持配置順序；未知名稱或空白清單項目會拒絕執行。`--repeats` 覆寫正式次數（1–1000），暖身次數維持配置；`--jobs` 為 1–64，明確指定 0 會被拒絕。有效篩選與覆寫結果會保存到 manifest／provenance；`resume` 保留原計畫，不接受這些覆寫。
+
+每次新的 `run` 會在建立資料庫或呼叫 agent 前，先顯示選定項目、並行數、暖身／正式／總次數，以及繼承原本 HOME 的設定。`--dry-run` 輸出 JSON 計畫，只進行靜態驗證，不確認 CLI 安裝、認證、repo commit、網路或實際執行結果。計畫次數是 agent 嘗試次數，不是上游模型請求數或費用估算。macOS 的 `run`、`--dry-run` 與 `doctor` 會在呼叫任何 CLI 前拒絕不支援的 agy 隔離配置，提示明確改用原本 HOME；不會自動取消隔離。被阻擋的 dry-run 仍會列出 JSON 計畫與診斷，再以非零狀態結束。
+
 ## 吞吐量的界線
 
 | 指標 | 意義 |
@@ -255,7 +272,7 @@ CLI 會在階段切換時及每 30 秒顯示進度，包含目前階段、工作
 
 使用者回報 2026-10-11 並行實驗仍出現 Antigravity「無法儲存／要求重置」彈窗；通過輸出驗證不代表無人值守正常，耗時可能包含互動等待，不能視為乾淨速度比較。原始紀錄維持不變。
 
-macOS 的隔離 agy 現在會在呼叫 CLI 前停止，記錄未評分的 `agent_unavailable`／`macos_keychain_isolation_unsupported`，並停止該 agent 設定的後續工作。複製 OAuth 檔案到暫存 HOME 不會阻止原生 Keychain 存取。這是避免重複觸發的保護措施，並非修復系統鑰匙圈；非隔離 agy 仍可能跳窗，Linux 隔離維持原行為。程式不重置鑰匙圈、不偷偷取消隔離，也不改用另外計費的 API-key 供應商。
+macOS 的 `run` 與 `doctor` 現在會在呼叫任何 CLI 前拒絕隔離 agy，新執行不會為此不相容計畫建立實驗 artifacts。原本的嘗試層保護仍保留，可記錄未評分的 `agent_unavailable`／`macos_keychain_isolation_unsupported`。複製 OAuth 檔案到暫存 HOME 不會阻止原生 Keychain 存取。這是避免重複觸發的保護措施，並非修復系統鑰匙圈；非隔離 agy 仍可能跳窗，Linux 隔離維持原行為。程式不重置鑰匙圈、不偷偷取消隔離，也不改用另外計費的 API-key 供應商。
 
 參考[官方故障排除文件](https://www.antigravity.google/docs/cli/troubleshooting/)及[上游 #803](https://github.com/google-antigravity/antigravity-cli/issues/803)。2026-10-11 改用原本登入 HOME 實測 agy 1.3.3：直接呼叫成功，低／中／高各兩次，共 6 次皆完成並通過驗證；直接呼叫 log 沒有儲存失敗紀錄。使用者確認本輪沒有再出現儲存／重置彈窗。長時間執行及日後更新 OAuth token 的行為仍待驗證，不能視為上游鑰匙圈問題已永久修復。
 
@@ -271,3 +288,11 @@ AGY_CLI_DISABLE_AUTO_UPDATE=true agy --dangerously-skip-permissions -p 'Reply wi
 ```
 
 此配置明確設定 `isolate_config: false`，保留原本 HOME 與 Keychain 環境，測試低／中／高各兩次。agy adapter 在測試期間停用自動更新，持續使用 `--dangerously-skip-permissions`。呼叫會繼承使用者設定、規則、plugin 與登入狀態，因此不能當作完全隔離的速度比較；其他隔離配置維持不變。此方式不要另外覆寫為臨時 HOME。若原本 HOME 仍出現儲存／重置彈窗，應停止測試並調查原生認證存取，不能只靠輸出成功判定正常。
+
+## Fast 設定證據與報告
+
+新 Codex 紀錄分開保存請求值 `requested_service_tier`、可選的 CLI 啟動參數摘要 `cli_launch`，以及獨立回報的 `observed_service_tier`。既有 `configured_*` 仍代表使用者設定檔快照，不會用啟動參數覆蓋；因此隔離模式可以同時記錄「忽略使用者設定」與明確的 fast 啟動參數。
+
+`cli_launch` 僅保存白名單中的 tier／fast／隔離／YOLO 旗標、明確的 tier 與 fast 開關值，以及程序是否啟動。它不保存任意 argv、提示、環境變數、執行檔路徑或憑證。沒有明確的開關參數時，fast 開關維持未知；指定 default tier 不等同關閉 fast feature。參數摘要不能證明 CLI 最終設定、功能被接受或服務端採用。
+
+文字與 HTML 報告分開顯示請求 tier、CLI 參數 tier、fast 開關參數、使用者設定 tier、服務端回報 tier。只有終端結果回報才可提供 tier 與 `observed_service_tier_source`，初始化或設定回顯不代表實際採用值。回報值與請求不同時保留回報值；沒有回報維持 `null`／`unknown`，舊資料不從請求值回填 CLI 證據。新增欄位由 SQLite 的既有 run JSON 保存，不需資料表遷移。離線 fixture 驗證不等於實際 fast 生效驗證。

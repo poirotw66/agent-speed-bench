@@ -15,6 +15,7 @@ type Usage struct {
 type Event struct {
 	StreamTransport         string   `json:"stream_transport,omitempty"`
 	ServiceTier             string   `json:"service_tier,omitempty"`
+	ServiceTierSource       string   `json:"service_tier_source,omitempty"`
 	ReportedDurationSeconds *float64 `json:"reported_duration_seconds,omitempty"`
 	ReportedDurationSource  string   `json:"reported_duration_source,omitempty"`
 	RunID                   string   `json:"run_id,omitempty"`
@@ -43,18 +44,28 @@ type Failure struct {
 }
 
 type Settings struct {
-	RequestedServiceTier      string  `json:"requested_service_tier,omitempty"`
-	ConfiguredServiceTier     *string `json:"configured_service_tier"`
-	ObservedServiceTier       *string `json:"observed_service_tier"`
-	ConfiguredFastMode        *bool   `json:"configured_fast_mode"`
-	RequestedModel            string  `json:"requested_model,omitempty"`
-	ConfiguredModel           *string `json:"configured_model"`
-	ObservedModel             *string `json:"observed_model"`
-	RequestedReasoningEffort  string  `json:"requested_reasoning_effort,omitempty"`
-	ConfiguredReasoningEffort *string `json:"configured_reasoning_effort"`
-	ObservedReasoningEffort   *string `json:"observed_reasoning_effort"`
-	ConfigSource              string  `json:"config_source,omitempty"`
-	ConfigStatus              string  `json:"config_status"`
+	CLILaunch                 *CLILaunch `json:"cli_launch,omitempty"`
+	ObservedServiceTierSource *string    `json:"observed_service_tier_source,omitempty"`
+	RequestedServiceTier      string     `json:"requested_service_tier,omitempty"`
+	ConfiguredServiceTier     *string    `json:"configured_service_tier"`
+	ObservedServiceTier       *string    `json:"observed_service_tier"`
+	ConfiguredFastMode        *bool      `json:"configured_fast_mode"`
+	RequestedModel            string     `json:"requested_model,omitempty"`
+	ConfiguredModel           *string    `json:"configured_model"`
+	ObservedModel             *string    `json:"observed_model"`
+	RequestedReasoningEffort  string     `json:"requested_reasoning_effort,omitempty"`
+	ConfiguredReasoningEffort *string    `json:"configured_reasoning_effort"`
+	ObservedReasoningEffort   *string    `json:"observed_reasoning_effort"`
+	ConfigSource              string     `json:"config_source,omitempty"`
+	ConfigStatus              string     `json:"config_status"`
+}
+
+// CLILaunch describes explicit safe arguments, not resolved CLI or backend state.
+type CLILaunch struct {
+	ServiceTier *string  `json:"service_tier"`
+	FastMode    *bool    `json:"fast_mode"`
+	Arguments   []string `json:"arguments"`
+	Started     bool     `json:"started"`
 }
 
 type RawLine struct {

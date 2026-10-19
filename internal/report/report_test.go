@@ -71,20 +71,50 @@ func TestThinkingDurationAndTierRemainDistinct(t *testing.T) {
 	if err := HTML(&out, []telemetry.Run{r}); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Thinking: 214", "5.990 s", "agy.result.duration_seconds", "includes_thinking", "Service tier requested: fast; configured: unknown; observed: unknown"} {
+	for _, want := range []string{"Thinking: 214", "5.990 s", "agy.result.duration_seconds", "includes_thinking", "Service tier requested: fast; CLI arguments: unknown; server-reported: unknown"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatal("missing", want)
 		}
 	}
 	out.Reset()
 	Text(&out, []telemetry.Run{r})
-	if !strings.Contains(out.String(), "thinking=214") || !strings.Contains(out.String(), "observed=unknown") {
+	if !strings.Contains(out.String(), "thinking=214") || !strings.Contains(out.String(), "server-reported: unknown") {
 		t.Fatal(out.String())
 	}
 	other := r
 	other.Metrics.Usage.OutputTokenAccounting = ""
 	if len(Aggregate([]telemetry.Run{r, other})) != 2 {
 		t.Fatal("accounting bases pooled")
+	}
+}
+
+func TestReportsDistinguishFastLaunchFromServerReceipt(t *testing.T) {
+	fast, normal, enabled := "fast", "default", true
+	for _, observed := range []*string{nil, &normal} {
+		r := telemetry.Run{ID: "fast-evidence", Settings: telemetry.Settings{
+			RequestedServiceTier: fast, ConfiguredServiceTier: &normal, ObservedServiceTier: observed,
+			ConfigStatus: "user_config_only", CLILaunch: &telemetry.CLILaunch{ServiceTier: &fast, FastMode: &enabled, Started: true, Arguments: []string{"--config", `service_tier="fast"`, "--enable", "fast_mode"}},
+		}}
+		want := "Service tier requested: fast; CLI arguments: fast; server-reported: " + setting(observed)
+		var text, rendered bytes.Buffer
+		Text(&text, []telemetry.Run{r})
+		if err := HTML(&rendered, []telemetry.Run{r}); err != nil {
+			t.Fatal(err)
+		}
+		for _, out := range []string{text.String(), rendered.String()} {
+			for _, fragment := range []string{want, "fast feature argument: true", "user-config tier: default", "receipt source: unknown", "process started=true", "--enable fast_mode"} {
+				if !strings.Contains(out, fragment) {
+					t.Fatal("missing", fragment, out)
+				}
+			}
+		}
+	}
+	var old bytes.Buffer
+	if err := HTML(&old, []telemetry.Run{{Settings: telemetry.Settings{RequestedServiceTier: fast}}}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(old.String(), "CLI argument evidence: unknown") || !strings.Contains(old.String(), "fast feature argument: unknown") {
+		t.Fatal(old.String())
 	}
 }
 

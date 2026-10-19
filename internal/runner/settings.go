@@ -3,11 +3,57 @@ package runner
 import (
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 
 	"github.com/pelletier/go-toml/v2"
+	"github.com/poirotw66/agent-speed-bench/internal/adapters"
 	"github.com/poirotw66/agent-speed-bench/internal/benchmark"
 	"github.com/poirotw66/agent-speed-bench/internal/telemetry"
 )
+
+// Capture only allowlisted arguments from the actual command; never serialize
+// arbitrary argv, executable paths, stdin, environment, or configuration files.
+func snapshotCLILaunch(a benchmark.Agent, command adapters.Command) *telemetry.CLILaunch {
+	if a.Adapter != "codex" {
+		return nil
+	}
+	s := &telemetry.CLILaunch{Arguments: []string{}}
+	for i := 0; i < len(command.Args); i++ {
+		arg := command.Args[i]
+		switch arg {
+		case "--ignore-user-config", "--ignore-rules", "--yolo":
+			s.Arguments = append(s.Arguments, arg)
+		case "--config":
+			if i+1 >= len(command.Args) {
+				continue
+			}
+			i++
+			key, _, ok := strings.Cut(command.Args[i], "=")
+			if !ok || key != "service_tier" {
+				continue
+			}
+			var config struct {
+				Tier string `toml:"service_tier"`
+			}
+			if toml.Unmarshal([]byte(command.Args[i]), &config) != nil || (config.Tier != "fast" && config.Tier != "default") {
+				continue
+			}
+			s.ServiceTier = &config.Tier
+			s.Arguments = append(s.Arguments, "--config", key+"="+strconv.Quote(config.Tier))
+		case "--enable", "--disable":
+			if i+1 < len(command.Args) {
+				i++
+				if command.Args[i] == "fast_mode" {
+					enabled := arg == "--enable"
+					s.FastMode = &enabled
+					s.Arguments = append(s.Arguments, arg, "fast_mode")
+				}
+			}
+		}
+	}
+	return s
+}
 
 // Snapshot only allowlisted fields; user config is not the resolved CLI configuration.
 func snapshotSettings(a benchmark.Agent) telemetry.Settings {

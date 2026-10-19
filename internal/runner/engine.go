@@ -65,6 +65,9 @@ func Preflight(ctx context.Context, cfg benchmark.Config) ([]AgentInfo, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
+	if err := ValidatePlatform(cfg); err != nil {
+		return nil, err
+	}
 	infos := []AgentInfo{}
 	for _, a := range cfg.Agents {
 		adapter, err := adapters.New(a)
@@ -458,7 +461,11 @@ func executeAttempt(parent context.Context, a benchmark.Agent, task benchmark.Ca
 	out := &lineWriter{collector: c, stream: "stdout", file: files[0]}
 	stderr := &lineWriter{collector: c, stream: "stderr", file: files[1]}
 	monitor.setPhase("agent")
+	r.Settings.CLILaunch = snapshotCLILaunch(a, command)
 	p := RunProcess(ctx, command, workspace, out, stderr)
+	if r.Settings.CLILaunch != nil {
+		r.Settings.CLILaunch.Started = p.ExitCode != nil
+	}
 	monitor.setPhase("postprocess")
 	if flushErr := out.flush(); flushErr != nil {
 		return r, flushErr
@@ -507,6 +514,11 @@ func executeAttempt(parent context.Context, a benchmark.Agent, task benchmark.Ca
 		if event.ServiceTier != "" {
 			value := event.ServiceTier
 			r.Settings.ObservedServiceTier = &value
+			r.Settings.ObservedServiceTierSource = nil
+			if event.ServiceTierSource != "" {
+				source := event.ServiceTierSource
+				r.Settings.ObservedServiceTierSource = &source
+			}
 		}
 		if event.Model != "" {
 			value := event.Model

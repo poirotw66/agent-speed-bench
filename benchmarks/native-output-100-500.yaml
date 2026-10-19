@@ -1,0 +1,58 @@
+# Compact descriptive comparison: 14 warmups + 42 measured calls, jobs=1.
+# agy keeps the native login HOME for macOS Keychain compatibility.
+# Its host settings are inherited; this is not uniform configuration isolation.
+name: native-output-100-500
+warmup_repeats: 1
+repeats: 3
+jobs: 1
+timeout_seconds: 300
+agents:
+  - name: sol-medium
+    isolate_config: true
+    adapter: codex
+    model: gpt-6.1-sol
+    reasoning_effort: medium
+    service_tier: default
+  - name: luna-high
+    isolate_config: true
+    adapter: codex
+    model: gpt-6-luna
+    reasoning_effort: high
+    service_tier: default
+  - name: luna-high-fast
+    isolate_config: true
+    adapter: codex
+    model: gpt-6-luna
+    reasoning_effort: high
+    service_tier: fast
+  - name: cursor-auto
+    isolate_config: true
+    adapter: cursor
+    model: auto
+    trust_workspace: true
+  - name: agy-low
+    isolate_config: false
+    adapter: agy
+    model: gemini-3.8-flash-low
+    reasoning_effort: low
+  - name: agy-medium
+    isolate_config: false
+    adapter: agy
+    model: gemini-3.8-flash-medium
+    reasoning_effort: medium
+  - name: agy-high
+    isolate_config: false
+    adapter: agy
+    model: gemini-3.8-flash-high
+    reasoning_effort: high
+cases:
+  - strip_instructions: true
+    name: short
+    prompt: Print integers 1 through 100, one per line, followed by BENCH_DONE on its own line. Do not call tools, modify files, or add commentary.
+    verify:
+      integer_sequence: {start: 1, end: 100, end_marker: BENCH_DONE}
+  - strip_instructions: true
+    name: medium
+    prompt: Print integers 1 through 500, one per line, followed by BENCH_DONE on its own line. Do not call tools, modify files, or add commentary.
+    verify:
+      integer_sequence: {start: 1, end: 500, end_marker: BENCH_DONE}

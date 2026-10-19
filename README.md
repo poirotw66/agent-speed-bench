@@ -24,9 +24,26 @@ The demo runs six attempts, writes a fixture file, verifies the output and file 
 ./bin/agentspeedbench report -experiment EXPERIMENT_ID -out runs/experiment.html
 ```
 
-`doctor` validates configuration, resolves pinned repository commits, checks executables, and reads CLI versions. It does not test authentication or run model prompts. Real `run` commands use the installed agents' account configuration and can consume quota. Authenticate each CLI separately before running.
+`doctor` validates configuration and platform compatibility before invoking any CLI, then resolves pinned repository commits, checks executables, and reads CLI versions. It does not test authentication or run model prompts. Real `run` commands use the installed agents' account configuration and can consume quota. Authenticate each CLI separately before running.
 
-Flags must come before the YAML filename. `run` accepts `-out`, `-db`, and `-jobs`; `report` accepts `-out`, `-db`, and `-experiment`. Defaults are `runs/` and `agentspeedbench.db`. Exit code 1 indicates an infrastructure error, an unsuccessful agent attempt, or failed verification. Successful but ungraded attempts do not assert correctness.
+Flags must come before the YAML filename. `run` accepts `-out`, `-db`, `-jobs`, `-repeats`, `-agent`, `-case`, and `-dry-run`; `report` accepts `-out`, `-db`, and `-experiment`. Defaults are `runs/` and `agentspeedbench.db`. Exit code 1 indicates an infrastructure error, an unsuccessful agent attempt, or failed verification. Successful but ungraded attempts do not assert correctness.
+
+## Compact measurement and execution planning
+
+`benchmarks/native-output-100-500.yaml` contains seven agent configurations, only the 100/500 cases, three measured repeats, one warmup per agent/case, and `jobs: 1`: **14 warmups + 42 measured calls = 56 planned calls**. Codex and Cursor isolate settings; agy explicitly uses `isolate_config: false` and its native login HOME for macOS Keychain compatibility. agy inherits host settings; the profile does not claim uniform configuration isolation. The historical controlled-output profile remains available with 10 repeats and the 2000 case.
+
+```sh
+# Plan only: no CLI/version commands, repository resolution, database or artifacts.
+./bin/agentspeedbench run --dry-run benchmarks/native-output-100-500.yaml
+# Filter by exact configuration names, not adapter or model names.
+./bin/agentspeedbench run --dry-run --agent luna-high,luna-high-fast --case short,medium --repeats 3 benchmarks/native-output-100-500.yaml
+# Execute the selected plan (one warmup + three measured calls).
+./bin/agentspeedbench run --agent luna-high --case short --repeats 3 benchmarks/native-output-100-500.yaml
+```
+
+`--agent` and `--case` accept comma-separated names and preserve configuration order; unknown names and empty list elements fail before execution. `--repeats` changes measured repeats (1-1000); warmup repeats remain configured. `--jobs` accepts 1-64. Explicit zero values are rejected. Filters and overrides are saved in the experiment's effective configuration and provenance. `resume` keeps the original immutable plan and does not accept these overrides.
+
+Every new `run` prints the selected agents/cases, concurrency, warmup count, measured count, total planned calls, and profiles inheriting native HOME before creating a database or invoking an agent. `--dry-run` prints this plan as JSON and stops after static validation; it does not verify installed executables, authentication, repository commits, network access, or runtime correctness. Planned calls are attempt counts, not upstream model-request or billing estimates: an agent can make multiple model/tool calls. On macOS, unsupported isolated agy profiles fail static platform validation in `run`, `--dry-run`, and `doctor`, with an explicit native-HOME alternative; isolation is never silently changed. A blocked dry-run still prints its JSON plan and diagnostic notes, then exits nonzero.
 
 ## Parallel execution and latest native measurement
 
@@ -57,6 +74,14 @@ The original 10-repeat schedule was reduced at the user's request: 13 completed 
 | AGY Gemini-3.8-Flash / high | 8.48 | 51.30 | 15.19 | 145.93 |
 
 Every cell has **n=3**, a small sample; minor differences do not establish a stable ranking. Effective tok/s is reported output tokens divided by the whole agent process wall time, not pure generation throughput. AGY output accounting includes thinking; Codex and Cursor accounting remains unknown. Codex TTFA uses complete-message receipt, while Cursor and agy use text-delta receipt. These boundaries are not interchangeable. Generation and model-active tok/s remain unknown.
+
+#### Fast evidence in new run records
+
+New Codex attempts retain three separate layers in `settings`: the requested `requested_service_tier`, an optional `cli_launch` summary of explicit launch arguments, and the independently reported `observed_service_tier`. Existing `configured_*` fields remain a user-file snapshot; they are not overwritten with launch overrides. Isolation can therefore record `config_status: user_config_ignored` alongside CLI arguments requesting Fast.
+
+`cli_launch` records only allowlisted tier/fast/isolation/YOLO flags, explicit tier and fast-feature values, and whether the process started. It excludes arbitrary arguments, prompts, environment variables, executable paths and credentials. The fast-feature value stays unknown when no explicit enable/disable argument exists; `service_tier=default` does not imply that the feature flag was disabled. Launch arguments do not prove resolved CLI settings, feature acceptance, or backend adoption.
+
+Text and HTML reports display requested tier, CLI argument tier, fast-feature argument, user-config tier and server-reported tier separately. A terminal CLI receipt can supply the reported tier and `observed_service_tier_source`; startup/config echoes do not establish the served tier. A reported tier different from the request is retained as reported. Missing receipts remain `null`/`unknown`; historical records without launch evidence are not backfilled from requested settings. SQLite stores these additive fields in the existing run JSON without a schema migration. Offline fixture tests cover evidence boundaries; they do not prove live Fast adoption.
 
 #### Fast-tier verification
 
@@ -439,7 +464,7 @@ Attempt `timing.postprocess_seconds` now records runner postprocessing after age
 
 ### macOS Antigravity Keychain limitation
 
-Isolated `agy` execution on macOS now stops before invoking the agent, records ungraded `agent_unavailable` with code `macos_keychain_isolation_unsupported`, and stops subsequent work for that agent configuration. Copying an OAuth token into a temporary HOME does not prevent native Keychain access. This is a containment measure, not a system Keychain repair. macOS nonisolated agy execution still uses native authentication and may show dialogs; Linux isolation is unchanged. The runner does not reset or modify Keychain settings, silently disable isolation, or switch account-backed tests to a separately billed API-key provider. Earlier raw records remain unchanged.
+`run` and `doctor` reject isolated `agy` on macOS before invoking any CLI; a new run does not create experiment artifacts for that incompatible plan. The attempt-level guard remains as defense in depth and can record ungraded `agent_unavailable` with code `macos_keychain_isolation_unsupported`. Copying an OAuth token into a temporary HOME does not prevent native Keychain access. This is a containment measure, not a system Keychain repair. macOS nonisolated agy execution still uses native authentication and may show dialogs; Linux isolation is unchanged. The runner does not reset or modify Keychain settings, silently disable isolation, or switch account-backed tests to a separately billed API-key provider. Earlier raw records remain unchanged.
 
 The [official troubleshooting guide](https://www.antigravity.google/docs/cli/troubleshooting/) describes native keyring use. [Upstream issue #803](https://github.com/google-antigravity/antigravity-cli/issues/803) reports a matching storage dialog even when the default Keychain exists, including successful continuation after dismissal. The 2026-10-11 recovery smoke used the original login HOME with agy 1.3.3: a direct `AGY_OK` call succeeded, followed by low/medium/high (two attempts each), all six completed and passed. No storage-failure diagnostics were found in the direct-call log. The user confirmed that no storage/reset dialogs appeared during this smoke. Long-running sessions and future token-refresh behavior remain unverified; this is a working native-home path, not an upstream Keychain repair.
 

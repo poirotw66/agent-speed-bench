@@ -164,3 +164,28 @@ func TestBlockedAGYDoesNotInvokeExecutable(t *testing.T) {
 		t.Fatal("blocked executable ran", err)
 	}
 }
+
+func TestPreflightRejectsUnsupportedIsolationBeforeVersionCommands(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS Keychain policy")
+	}
+	root := t.TempDir()
+	marker := filepath.Join(root, "invoked")
+	command := filepath.Join(root, "fake-agent")
+	if err := os.WriteFile(command, []byte("#!/bin/sh\ntouch '"+marker+"'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := benchmark.Config{Name: "preflight", Jobs: 1, Repeats: 1, TimeoutSeconds: 1,
+		Agents: []benchmark.Agent{
+			{Name: "first", Adapter: "generic", Command: command, VersionArgs: []string{"--version"}},
+			{Name: "agy", Adapter: "agy", Command: command, IsolateConfig: true},
+		}, Cases: []benchmark.Case{fixtureTask()},
+	}
+	_, err := Preflight(context.Background(), cfg)
+	if !errors.Is(err, errAGYKeychainIsolation) || !strings.Contains(err.Error(), "isolate_config: false") {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("preflight started a CLI before rejecting the configuration", err)
+	}
+}

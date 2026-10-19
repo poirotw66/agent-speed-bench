@@ -224,8 +224,10 @@ func (p *parser) ParseEvent(line []byte) ([]telemetry.Event, error) {
 		return []telemetry.Event{{Type: "agent_error", Text: f.Message, Failure: f}}, nil
 	}
 	var events []telemetry.Event
-	if w.ServiceTier != "" {
-		events = append(events, telemetry.Event{Type: "agent_metadata", ServiceTier: w.ServiceTier})
+	// Startup/config echoes do not establish which service tier served a turn.
+	tierReceipt := p.agent.Adapter == "codex" && w.Type == "turn.completed" || (p.agent.Adapter == "claude" || p.agent.Adapter == "cursor") && w.Type == "result"
+	if w.ServiceTier != "" && tierReceipt {
+		events = append(events, telemetry.Event{Type: "agent_metadata", ServiceTier: w.ServiceTier, ServiceTierSource: p.agent.Adapter + "." + w.Type + ".service_tier"})
 	}
 	if w.Model != "" {
 		events = append(events, telemetry.Event{Type: "agent_metadata", Model: w.Model})

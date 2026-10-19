@@ -7,6 +7,28 @@ import (
 	"testing"
 )
 
+func TestServiceTierRequiresTerminalReceipt(t *testing.T) {
+	for _, kind := range []string{"thread.started", "turn.started", "unknown.config", "result", "turn.completed"} {
+		p, _ := New(benchmark.Agent{Adapter: "codex"})
+		events, err := p.ParseEvent([]byte(`{"type":"` + kind + `","service_tier":"priority"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		observed := false
+		for _, e := range events {
+			if e.ServiceTier != "" {
+				observed = true
+				if e.ServiceTierSource != "codex.turn.completed.service_tier" {
+					t.Fatal(e)
+				}
+			}
+		}
+		if observed != (kind == "turn.completed") {
+			t.Fatal(kind, events)
+		}
+	}
+}
+
 func TestCursorTerminalUsage(t *testing.T) {
 	for _, raw := range []string{`{"inputTokens":16505,"outputTokens":262,"cacheReadTokens":1152,"cacheWriteTokens":0}`, `{"outputTokens":null}`, `{}`} {
 		p, _ := New(benchmark.Agent{Adapter: "cursor"})

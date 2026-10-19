@@ -45,6 +45,16 @@ func stripInstructions(root string) error {
 
 var errAGYKeychainIsolation = errors.New("isolated agy OAuth execution on macOS is unavailable: temporary HOME does not isolate native Keychain access and may trigger storage/reset dialogs; no keychain settings were changed")
 
+// ValidatePlatform checks isolation compatibility without starting any CLI.
+func ValidatePlatform(cfg benchmark.Config) error {
+	for _, a := range cfg.Agents {
+		if err := checkAgentHomeIsolation(a, runtime.GOOS); err != nil {
+			return fmt.Errorf("agent %s: %w; explicitly use isolate_config: false with the native login HOME (see benchmarks/native-output-100-500.yaml)", a.Name, err)
+		}
+	}
+	return nil
+}
+
 func checkAgentHomeIsolation(a benchmark.Agent, platform string) error {
 	if a.IsolateConfig && a.Adapter == "agy" && platform == "darwin" {
 		return errAGYKeychainIsolation

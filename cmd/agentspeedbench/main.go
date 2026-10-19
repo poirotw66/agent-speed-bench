@@ -49,9 +49,14 @@ func run(ctx context.Context, args []string) error {
 	case "run", "resume":
 		fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
 		root, jobs := "runs", 0
+		repeats, agentNames, caseNames, dryRun := 0, "", "", false
 		if args[0] == "run" {
 			fs.StringVar(&root, "out", "runs", "Artifact root")
 			fs.IntVar(&jobs, "jobs", 0, "Override parallel jobs (default: configuration)")
+			fs.IntVar(&repeats, "repeats", 0, "Override measured repeats per agent and case")
+			fs.StringVar(&agentNames, "agent", "", "Select agent names (comma-separated, exact matches)")
+			fs.StringVar(&caseNames, "case", "", "Select case names (comma-separated, exact matches)")
+			fs.BoolVar(&dryRun, "dry-run", false, "Print a JSON plan without invoking agents or creating artifacts")
 		}
 		dbPath := fs.String("db", "agentspeedbench.db", "SQLite database")
 		if err := fs.Parse(args[1:]); err != nil {
@@ -70,8 +75,35 @@ func run(ctx context.Context, args []string) error {
 			if err != nil {
 				return err
 			}
-			if jobs != 0 {
-				cfg.Jobs = jobs
+			opts := runOptions{Agents: agentNames, Cases: caseNames}
+			var optionErr error
+			fs.Visit(func(f *flag.Flag) {
+				switch f.Name {
+				case "jobs":
+					opts.Jobs = &jobs
+				case "repeats":
+					opts.Repeats = &repeats
+				case "agent", "case":
+					if f.Value.String() == "" {
+						optionErr = fmt.Errorf("--%s requires at least one name", f.Name)
+					}
+				}
+			})
+			if optionErr != nil {
+				return optionErr
+			}
+			cfg, err = applyRunOptions(cfg, opts)
+			if err != nil {
+				return err
+			}
+			if err := printRunPlan(os.Stdout, cfg, dryRun); err != nil {
+				return err
+			}
+			if err := runner.ValidatePlatform(cfg); err != nil {
+				return err
+			}
+			if dryRun {
+				return nil
 			}
 		}
 		s, err := storage.Open(*dbPath)
@@ -187,7 +219,8 @@ func usage() {
 	fmt.Print(`AgentSpeedBench — benchmark coding-agent latency, throughput, and correctness.
 
 Usage:
-  agentspeedbench run [-out runs] [-db agentspeedbench.db] [-jobs 1] benchmark.yaml
+  agentspeedbench run [-out runs] [-db agentspeedbench.db] [-jobs 1] [-repeats 3]
+                      [-agent NAME,...] [-case NAME,...] [-dry-run] benchmark.yaml
   agentspeedbench resume [-db agentspeedbench.db] experiment-directory
   agentspeedbench doctor benchmark.yaml
   agentspeedbench report [-db agentspeedbench.db] [-experiment ID] [-out report.html]
